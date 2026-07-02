@@ -8,75 +8,143 @@ namespace Snapfield.Platform.Net;
 public enum PeerRole { None, Controller, Receiver }
 
 /// <summary>
-/// A cross-machine sharing session over one <see cref="PeerLink"/>.
+/// A cross-machine sharing session.
 ///
 /// The machine that calls <see cref="Connect"/> is the CONTROLLER (it has the
 /// physical keyboard/mouse); the one that calls <see cref="Listen"/> is the
 /// RECEIVER. On connect both send <see cref="MsgType.Hello"/> with their monitors;
 /// the controller then builds a combined layout (local monitors + the receiver's
 /// placed to the right) and runs the <see cref="InputEngine"/>. When the cursor
-/// crosses onto a receiver monitor, the controller streams cursor/button/wheel
+/// crosses onto a receiver monitor, the controller streams cursor/button/wheel/key
 /// events; the receiver injects them.
+///
+/// The session outlives individual connections: when a link drops it releases
+/// the engine (freeing captured input) and automatically retries — the
+/// controller re-connects, the receiver re-listens — until <see cref="Dispose"/>.
 /// </summary>
 public sealed class NetworkSession : IDisposable
 {
+    private const int ReconnectDelayMs = 3000;
+    private const int RelistenDelayMs = 500;
+
     private readonly string _localMachineId;
     private readonly IReadOnlyList<MonitorInfo> _localMonitors;
-    private readonly PeerLink _link = new();
+
+    private PeerLink? _link;
     private InputEngine? _engine;
+    private int _linkGen;                 // stale-event guard: one generation per link
+    private volatile bool _disposed;
+    private int _reconnectAttempt;
+    private string _host = "";
+    private int _port;
 
     public PeerRole Role { get; private set; } = PeerRole.None;
     public string RemoteMachineId { get; private set; } = "";
     public int RemoteMonitorCount { get; private set; }
 
     private long _rxCount;
+    private double _sensitivity = 1.0;
 
     public event Action<string>? Status;
     public event Action<EngineStatus>? EngineStatus;
-    public event Action<int>? ControllerReady;          // remote monitor count (controller)
+    public event Action<int>? ControllerReady;             // remote monitor count (controller)
     public event Action<long, int, int>? ReceiverActivity; // (count, x, y) injected (receiver)
 
     public int LocalMonitorCount => _localMonitors.Count;
+
+    /// <summary>Remote-cursor speed multiplier; applies live to a running engine.</summary>
+    public double Sensitivity
+    {
+        get => _sensitivity;
+        set
+        {
+            _sensitivity = value;
+            if (_engine is not null) _engine.Sensitivity = value;
+        }
+    }
 
     public NetworkSession(string localMachineId, IReadOnlyList<MonitorInfo> localMonitors)
     {
         _localMachineId = localMachineId;
         _localMonitors = localMonitors;
-
-        _link.Connected += OnConnected;
-        _link.MessageReceived += OnMessage;
-        _link.Disconnected += reason =>
-        {
-            // Release the hooks/capture immediately: with the peer gone, swallowed
-            // mouse AND keyboard input would otherwise leave this machine locked.
-            _engine?.Dispose();
-            _engine = null;
-            Status?.Invoke($"Disconnected: {reason}");
-        };
     }
 
     public void Connect(string host, int port)
     {
         Role = PeerRole.Controller;
+        _host = host;
+        _port = port;
         Status?.Invoke($"Connecting to {host}:{port} …");
-        _link.Connect(host, port);
+        StartLink(l => l.Connect(host, port));
     }
 
     public void Listen(int port)
     {
         Role = PeerRole.Receiver;
+        _port = port;
         Status?.Invoke($"Listening on port {port} — waiting for a controller to connect …");
-        _link.Listen(port);
+        StartLink(l => l.Listen(port));
     }
 
-    private void OnConnected()
+    // ── Link lifecycle ───────────────────────────────────────────────────────
+
+    private void StartLink(Action<PeerLink> begin)
     {
+        var gen = ++_linkGen;
+        var link = new PeerLink();
+        link.Connected += () => { if (IsCurrent(gen)) OnConnected(link); };
+        link.MessageReceived += m => { if (IsCurrent(gen)) OnMessage(link, m); };
+        link.Disconnected += reason => OnLinkDown(gen, reason);
+        _link = link;
+        begin(link);
+    }
+
+    private bool IsCurrent(int gen) => !_disposed && gen == _linkGen;
+
+    private void OnLinkDown(int gen, string reason)
+    {
+        if (!IsCurrent(gen)) return;
+
+        // Release the hooks/capture immediately: with the peer gone, swallowed
+        // mouse AND keyboard input would otherwise leave this machine locked.
+        _engine?.Dispose();
+        _engine = null;
+        try { _link?.Dispose(); } catch { }
+        _link = null;
+
+        var delay = Role == PeerRole.Receiver ? RelistenDelayMs : ReconnectDelayMs;
+        Status?.Invoke($"Disconnected: {reason} — retrying in {delay / 1000.0:0.#}s …");
+
+        var t = new Thread(() =>
+        {
+            Thread.Sleep(delay);
+            if (!IsCurrent(gen)) return; // user stopped or a newer link exists
+            _reconnectAttempt++;
+            if (Role == PeerRole.Controller)
+            {
+                Status?.Invoke($"Reconnecting to {_host}:{_port} (attempt {_reconnectAttempt}) …");
+                StartLink(l => l.Connect(_host, _port));
+            }
+            else
+            {
+                Status?.Invoke($"Listening again on port {_port} (attempt {_reconnectAttempt}) …");
+                StartLink(l => l.Listen(_port));
+            }
+        }) { IsBackground = true, Name = "Snapfield.Reconnect" };
+        t.Start();
+    }
+
+    // ── Handshake + messages ─────────────────────────────────────────────────
+
+    private void OnConnected(PeerLink link)
+    {
+        _reconnectAttempt = 0;
         var monitors = _localMonitors.Select(MonitorState.From).ToArray();
-        _link.Send(NetMessage.Hello(_localMachineId, monitors));
+        link.Send(NetMessage.Hello(_localMachineId, monitors));
         Status?.Invoke("Connected. Exchanging layouts …");
     }
 
-    private void OnMessage(NetMessage msg)
+    private void OnMessage(PeerLink link, NetMessage msg)
     {
         switch (msg.Type)
         {
@@ -85,7 +153,7 @@ public sealed class NetworkSession : IDisposable
                 var remoteMonitors = (msg.Monitors ?? Array.Empty<MonitorState>())
                     .Select(s => s.ToMonitorInfo()).ToList();
                 if (Role == PeerRole.Controller)
-                    StartController(remoteMonitors);
+                    StartController(link, remoteMonitors);
                 else
                     Status?.Invoke($"Connected to controller '{RemoteMachineId}' " +
                                    $"(it advertised {remoteMonitors.Count} monitor(s)). Ready to be controlled.");
@@ -104,18 +172,20 @@ public sealed class NetworkSession : IDisposable
         }
     }
 
-    private void StartController(IReadOnlyList<MonitorInfo> remoteMonitors)
+    private void StartController(PeerLink link, IReadOnlyList<MonitorInfo> remoteMonitors)
     {
+        _engine?.Dispose(); // a reconnect replaces any previous engine
+
         var local = PhysicalLayoutBuilder.WindowsAligned(_localMonitors);
         var combined = new DesktopLayout(PhysicalLayoutBuilder.AppendToRight(local, remoteMonitors));
 
-        _engine = new InputEngine(_localMachineId, combined);
-        _engine.RemoteCursor += (_, x, y) => _link.Send(NetMessage.Cursor(x, y));
-        _engine.RemoteButton += (b, down) => _link.Send(NetMessage.MouseBtn(b, down));
-        _engine.RemoteWheel += (d, h) => _link.Send(NetMessage.Wheel(d, h));
-        _engine.RemoteKey += (vk, scan, down, ext) => _link.Send(NetMessage.KeyEvent(vk, scan, down, ext));
-        _engine.ControlEnteredRemote += _ => _link.Send(NetMessage.Enter());
-        _engine.ControlReturnedLocal += () => _link.Send(NetMessage.Leave());
+        _engine = new InputEngine(_localMachineId, combined) { Sensitivity = _sensitivity };
+        _engine.RemoteCursor += (_, x, y) => link.Send(NetMessage.Cursor(x, y));
+        _engine.RemoteButton += (b, down) => link.Send(NetMessage.MouseBtn(b, down));
+        _engine.RemoteWheel += (d, h) => link.Send(NetMessage.Wheel(d, h));
+        _engine.RemoteKey += (vk, scan, down, ext) => link.Send(NetMessage.KeyEvent(vk, scan, down, ext));
+        _engine.ControlEnteredRemote += _ => link.Send(NetMessage.Enter());
+        _engine.ControlReturnedLocal += () => link.Send(NetMessage.Leave());
         _engine.StatusChanged += s => EngineStatus?.Invoke(s);
 
         // Publish the remote count BEFORE the engine's first status event so the
@@ -129,7 +199,9 @@ public sealed class NetworkSession : IDisposable
 
     public void Dispose()
     {
+        _disposed = true;
+        _linkGen++; // invalidate any pending reconnect
         _engine?.Dispose();
-        _link.Dispose();
+        _link?.Dispose();
     }
 }

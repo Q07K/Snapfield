@@ -38,7 +38,10 @@ public sealed class PeerLink : IDisposable
                 var c = _listener.AcceptTcpClient();
                 Attach(c);
             }
-            catch (Exception ex) when (!_closed) { Disconnected?.Invoke(ex.Message); }
+            // Catch-all: an exception filter of `when (!_closed)` would leave the
+            // dispose-triggered abort UNHANDLED on this background thread and kill
+            // the whole process. Catch everything; only report when still open.
+            catch (Exception ex) { if (!_closed) Disconnected?.Invoke(ex.Message); }
         }) { IsBackground = true, Name = "Snapfield.Listen" };
         t.Start();
     }
@@ -88,7 +91,7 @@ public sealed class PeerLink : IDisposable
                 if (msg is not null) MessageReceived?.Invoke(msg);
             }
         }
-        catch (Exception ex) when (!_closed) { Disconnected?.Invoke(ex.Message); return; }
+        catch (Exception ex) { if (!_closed) Disconnected?.Invoke(ex.Message); return; }
         if (!_closed) Disconnected?.Invoke("peer closed the connection");
     }
 
@@ -117,7 +120,7 @@ public sealed class PeerLink : IDisposable
                 stream.Flush();
             }
         }
-        catch (Exception ex) when (!_closed) { Disconnected?.Invoke(ex.Message); }
+        catch (Exception ex) { if (!_closed) Disconnected?.Invoke(ex.Message); }
     }
 
     public void Dispose()

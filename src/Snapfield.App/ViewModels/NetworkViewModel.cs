@@ -76,6 +76,13 @@ public sealed class NetworkViewModel : ObservableObject
     private string _remoteHost = "";
     public string RemoteHost { get => _remoteHost; set => SetField(ref _remoteHost, value); }
 
+    private double _sensitivity = 1.0;
+    public double Sensitivity
+    {
+        get => _sensitivity;
+        set { if (SetField(ref _sensitivity, value) && _session is not null) _session.Sensitivity = value; }
+    }
+
     private string _status = "";
     public string Status { get => _status; private set => SetField(ref _status, value); }
 
@@ -102,7 +109,7 @@ public sealed class NetworkViewModel : ObservableObject
     private void StartSession(Action<NetworkSession> begin)
     {
         var monitors = new MonitorEnumerator().Enumerate();
-        _session = new NetworkSession(_machineId, monitors);
+        _session = new NetworkSession(_machineId, monitors) { Sensitivity = Sensitivity };
         _session.Status += OnStatus;
         _session.EngineStatus += OnEngineStatus;
         _session.ControllerReady += OnControllerReady;

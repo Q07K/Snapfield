@@ -42,6 +42,9 @@ public sealed class InputEngine : IDisposable
     /// <summary>Cursor speed multiplier while traversing remote screens.</summary>
     public double Sensitivity { get; set; } = 1.0;
 
+    /// <summary>Hide the (parked) local cursor while control is on a remote machine.</summary>
+    public bool HideCursorWhileCaptured { get; set; } = true;
+
     public event Action<EngineStatus>? StatusChanged;
 
     // Raised while control is on a remote monitor, for the network layer to forward.
@@ -98,6 +101,7 @@ public sealed class InputEngine : IDisposable
         _hook.Stop();
         _kbHook.Stop();
         _captured = false;
+        CursorHider.Show(); // never leave the system cursor hidden
         IsRunning = false;
         RaiseStatus(force: true);
     }
@@ -150,6 +154,7 @@ public sealed class InputEngine : IDisposable
         if (result.Transition == RouteTransition.ToLocal)
         {
             _captured = false;
+            CursorHider.Show();
             var (px, py) = result.PixelInt;
             CursorInjector.WarpTo(px, py);
             ControlReturnedLocal?.Invoke();
@@ -172,6 +177,7 @@ public sealed class InputEngine : IDisposable
     private void EnterCapture(Snapfield.Core.Input.RouteResult res)
     {
         _captured = true;
+        if (HideCursorWhileCaptured) CursorHider.Hide();
         CursorInjector.WarpTo(_center.X, _center.Y);
         if (res.Owner is not null)
         {

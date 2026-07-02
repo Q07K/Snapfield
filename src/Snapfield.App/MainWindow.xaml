@@ -58,6 +58,7 @@
                             MouseLeftButtonUp="Monitor_MouseLeftButtonUp">
                         <Border.ContextMenu>
                             <ContextMenu>
+                                <MenuItem Header="실제 크기 보정 (인치)…" Click="ResizeMonitor_Click"/>
                                 <MenuItem Header="평면에서 제거 (원격 모니터만)" Click="RemoveMonitor_Click"/>
                             </ContextMenu>
                         </Border.ContextMenu>

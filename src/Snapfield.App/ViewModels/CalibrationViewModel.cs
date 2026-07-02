@@ -191,6 +191,25 @@ public sealed class CalibrationViewModel : ObservableObject
         StatusText = $"Saved to {AppPaths.LayoutFile}";
     }
 
+    /// <summary>Corrects a monitor's physical size from its true diagonal, deriving
+    /// width/height from the pixel aspect ratio (square pixels assumed).</summary>
+    public void ResizeMonitor(MonitorViewModel m, double diagonalInches)
+    {
+        if (diagonalInches is < 5 or > 120)
+        {
+            StatusText = "5~120인치 범위로 입력하세요.";
+            return;
+        }
+        var diagMm = diagonalInches * 25.4;
+        var pixelDiag = Math.Sqrt((double)m.PixelWidth * m.PixelWidth + (double)m.PixelHeight * m.PixelHeight);
+        var w = diagMm * m.PixelWidth / pixelDiag;
+        var h = diagMm * m.PixelHeight / pixelDiag;
+        m.SetPhysicalSize(w, h);
+        RecomputeTransform();
+        Save(); // persists + applies live to a running session
+        StatusText = $"'{m.DisplayName}' 크기를 {diagonalInches:0.#}인치({w:0}×{h:0}mm)로 보정했습니다.";
+    }
+
     /// <summary>Removes a REMOTE monitor from the plane (a stale peer). Local
     /// monitors are physically attached and would only re-appear on re-detect.</summary>
     public void RemoveMonitor(MonitorViewModel m)

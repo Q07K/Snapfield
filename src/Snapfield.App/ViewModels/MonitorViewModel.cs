@@ -71,6 +71,17 @@ public sealed class MonitorViewModel : ObservableObject
         }
     }
 
+    /// <summary>Overrides the physical size (EDID lies are common — TVs, capture
+    /// dongles, some monitors report nonsense image sizes).</summary>
+    public void SetPhysicalSize(double widthMm, double heightMm)
+    {
+        WidthMm = widthMm;
+        HeightMm = heightMm;
+        OnPropertyChanged(nameof(PhysicalText));
+        OnPropertyChanged(nameof(DiagonalText));
+        RefreshCanvas();
+    }
+
     /// <summary>Re-raise canvas coordinates after the owner's transform changes.</summary>
     public void RefreshCanvas()
     {

@@ -93,6 +93,14 @@ public partial class MainWindow : Window
             Vm.RemoveMonitor(m);
     }
 
+    private void ResizeMonitor_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not ViewModels.MonitorViewModel m) return;
+        var dlg = new SizeInputWindow(m.DiagonalText) { Owner = this };
+        if (dlg.ShowDialog() == true && dlg.Inches is double inches)
+            Vm.ResizeMonitor(m, inches);
+    }
+
     private void Monitor_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
         if (_dragging is null) return;

@@ -1,0 +1,73 @@
+name: Release
+
+# Push a version tag (e.g. v1.0.0) to build the portable exe and publish a
+# GitHub Release with it attached. Manual runs build + upload a workflow
+# artifact without creating a release.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write   # required for softprops/action-gh-release to create the release
+
+jobs:
+  build-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore
+        run: dotnet restore Snapfield.sln
+
+      - name: Test
+        run: dotnet test Snapfield.sln --configuration Release --no-restore
+
+      - name: Publish self-contained single-file exe
+        shell: pwsh
+        run: |
+          dotnet publish src/Snapfield.App/Snapfield.App.csproj `
+            --configuration Release `
+            --runtime win-x64 `
+            --self-contained true `
+            -p:PublishSingleFile=true `
+            -p:IncludeNativeLibrariesForSelfExtract=true `
+            --output publish
+
+      - name: Stage release asset
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}"
+          if ([string]::IsNullOrWhiteSpace($version)) { $version = "dev" }
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item publish/Snapfield.App.exe "dist/Snapfield-$version.exe"
+          Get-ChildItem dist
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Snapfield-exe
+          path: dist/*.exe
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.exe
+          generate_release_notes: true
+          body: |
+            ## Snapfield ${{ github.ref_name }}
+
+            **다운로드**: 아래 `Snapfield-${{ github.ref_name }}.exe`를 받아 실행하세요.
+            .NET 런타임이 내장된 포터블 단일 실행 파일이라 설치가 필요 없습니다.
+
+            > 처음 실행 시 SmartScreen 경고가 뜨면 **추가 정보 → 실행**을 누르세요
+            > (코드 서명이 없는 exe라서 표시됩니다).

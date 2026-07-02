@@ -1,0 +1,86 @@
+# Snapfield
+
+Windows 전용 멀티-PC / 멀티-모니터 커서·키보드 공유 툴.
+**Mouse Without Borders**(네트워크 너머 PC 공유)와 **LittleBigMouse**(물리 좌표 기반 정밀 배치)를 결합한다.
+
+## 핵심 아이디어
+
+모든 PC의 모든 모니터를 **하나의 전역 물리 좌표 평면(mm 단위)** 에 배치한다.
+커서가 어느 화면 경계를 넘든, 그 위치를 전역 mm로 환산 → 이웃 모니터(같은 PC든 다른 PC든)를
+찾아 → 그 PC의 픽셀 좌표로 되돌려 커서를 놓는다. 해상도·물리 크기·DPI·상하 오프셋이 서로 달라도
+커서가 **물리적으로 같은 높이**에서 자연스럽게 넘어간다 (MWB의 Y좌표 튐 문제 해결).
+
+## 구조
+
+```
+Snapfield.sln
+├─ src/
+│  ├─ Snapfield.Core/        좌표계 모델 + 3단계 변환 파이프라인 (순수 C#, DI 없음)
+│  │   ├─ Geometry/          PhysicalPoint/Rect (mm), PixelRect (물리 픽셀)
+│  │   ├─ Model/             MonitorInfo, DesktopLayout (전역 평면)
+│  │   └─ Transforms/        CoordinateMapper — pixel↔physical, hit-test, resolve
+│  ├─ Snapfield.Platform/    Win32 P/Invoke + WMI (net8.0-windows)
+│  │   ├─ Interop/           NativeMethods (DPI, EnumDisplayMonitors, EnumDisplayDevices)
+│  │   └─ Monitors/          MonitorEnumerator — 실물 열거 + EDID 물리 크기
+│  └─ Snapfield.App/         WPF 앱 (현재는 감지 모니터 진단 뷰)
+└─ tests/
+   └─ Snapfield.Core.Tests/  좌표 변환 단위 테스트 (5개, MWB 문제 재현·해결 증명)
+```
+
+## 좌표 변환 파이프라인 (CoordinateMapper)
+
+1. **pixel → physical**: 어느 PC의 픽셀 커서를 전역 mm 평면으로. `physical = 물리오프셋 + (픽셀/해상도)·물리크기`
+2. **hit-test**: 전역 평면에서 그 점을 품은 모니터 찾기 (없으면 최근접 모니터로 clamp — 커서 유실 방지)
+3. **physical → pixel**: 목적지 모니터에서 역변환 → 그 PC가 이해하는 픽셀 좌표
+
+DPI 스케일링(125%/150%)은 **프로세스를 Per-Monitor-V2 aware로 만들어** 중화한다.
+그러면 Windows가 스케일된 픽셀이 아닌 **물리 픽셀**을 보고하므로, 변환은 순수 기하 계산이 된다.
+
+## 현재 상태 (검증됨)
+
+- [x] 솔루션 + 4 프로젝트 골격, 전체 빌드 통과
+- [x] Core 좌표계 모델 + CoordinateMapper
+- [x] 단위 테스트 9/9 통과 — 화면 간 물리 높이 유지 크로싱 + 레이아웃 저장/병합
+- [x] MonitorEnumerator — 실기기에서 EDID 물리 크기 읽기 검증 (Win32 ↔ WMI를 PnP id로 매칭)
+- [x] **보정 UI** (WPF): 모니터를 드래그로 물리 배치, 엣지 스냅, 자동정렬, JSON 저장/복원
+- [x] 레이아웃 영속화 (`%APPDATA%\Snapfield\layout.json`) + 재감지 시 저장된 배치 병합
+- [x] **입력 엔진**: `WH_MOUSE_LL` 후킹 + `SendInput` 주입 + 물리 좌표 라우터
+  - 엣지 크로싱 감지 → 원격 모니터로 핸드오프 → 커서 캡처(로컬 중앙 파킹) → 델타 누적 → 복귀 시 워프
+  - 팬텀 원격 화면으로 단일 PC 테스트 가능 (Input Engine 창)
+  - 라우터 로직 단위 테스트 15/15, 후킹 라이프사이클 검증
+
+### 보정 UI 사용법
+`dotnet run --project src/Snapfield.App` → 감지된 모니터가 물리 크기 비율대로 캔버스에 표시됨.
+- **드래그**: 모니터를 실제 배치대로 이동. 이웃 엣지에 자동 스냅.
+- **Auto-arrange**: 픽셀 순서대로 좌→우, 상단 정렬 재배치.
+- **Save layout**: 현재 배치를 저장 (다음 실행 시 자동 복원).
+
+## 입력 엔진 테스트 (단일 PC)
+1. `dotnet run --project src/Snapfield.App` → 보정 창에서 모니터 배치 후 **Save layout**
+2. **Input Engine…** 버튼 → 엔진 창
+3. **Start engine** (팬텀 화면 체크된 상태) → 커서를 화면 **오른쪽 끝으로 밀면** 상태가
+   초록(LOCAL) → 주황(REMOTE captured)으로 바뀌고 커서가 로컬 중앙에 파킹됨
+4. 마우스를 **왼쪽으로 되돌리면** 자동으로 로컬 복귀 + 커서 워프 (물리 높이 유지)
+
+## 다음 단계
+
+- [ ] **네트워크 릴레이**: PC 간 UDP 커서/입력 전송, `DesktopLayout` 동기화 (팬텀을 실제 원격 PC로 대체)
+- [ ] 원격 측 입력 주입(클릭·휠·키보드) 포워딩
+- [ ] 커서 숨김(캡처 중), 멀티모니터 로컬 경로, 클립보드 공유
+- [ ] 보정 UI 확장: 물리 크기 수동 보정(EDID 오류 대비), 줌/팬
+- [ ] **트레이 상주** + 자동시작
+
+## 빌드 / 테스트 / 배포
+
+```powershell
+dotnet build Snapfield.sln
+dotnet test Snapfield.sln
+dotnet run --project src/Snapfield.App
+
+# 포터블 단일 exe (테스트 PC에 .NET 불필요)
+dotnet publish src/Snapfield.App -c Release -r win-x64 --self-contained true `
+  -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
+# 산출물: src/Snapfield.App/bin/Release/net8.0-windows/win-x64/publish/Snapfield.App.exe
+```
+
+.NET 8 SDK 필요 (WPF는 `net8.0-windows` TFM).

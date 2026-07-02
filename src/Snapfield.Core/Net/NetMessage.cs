@@ -14,8 +14,9 @@ public enum MsgType
     ControlEnter, // control just entered the receiver
     ControlLeave, // control just left the receiver
     Key,          // Vk, Scan, Down, Extended — keyboard transition
-    Clipboard,    // Text — clipboard content changed on the sender
-    AuthFail,     // receiver rejected the controller's pairing pin
+    Clipboard,      // Text — clipboard text changed on the sender
+    AuthFail,       // receiver rejected the controller's pairing pin
+    ClipboardImage, // Text carries base64 PNG — clipboard image changed on the sender
 }
 
 /// <summary>
@@ -46,6 +47,7 @@ public sealed record NetMessage
         new() { Type = MsgType.Hello, MachineId = machineId, Monitors = monitors, Pin = pin };
 
     public static NetMessage ClipboardText(string text) => new() { Type = MsgType.Clipboard, Text = text };
+    public static NetMessage ClipboardPng(byte[] png) => new() { Type = MsgType.ClipboardImage, Text = Convert.ToBase64String(png) };
     public static NetMessage AuthFailed() => new() { Type = MsgType.AuthFail };
 
     public static NetMessage Cursor(int x, int y) => new() { Type = MsgType.CursorMove, X = x, Y = y };

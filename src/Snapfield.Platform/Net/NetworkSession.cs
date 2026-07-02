@@ -225,6 +225,19 @@ public sealed class NetworkSession : IDisposable
                 {
                     _lastAppliedClipboard = incoming;
                     ClipboardIO.TrySetText(incoming);
+                    _clipboard?.NoteSelfChange();
+                }
+                break;
+
+            case MsgType.ClipboardImage:
+                if (msg.Text is { Length: > 0 } b64)
+                {
+                    try
+                    {
+                        ClipboardIO.TrySetImagePng(Convert.FromBase64String(b64));
+                        _clipboard?.NoteSelfChange();
+                    }
+                    catch { /* malformed payload — ignore */ }
                 }
                 break;
 
@@ -285,6 +298,7 @@ public sealed class NetworkSession : IDisposable
             if (text == _lastAppliedClipboard) return; // our own application of the peer's copy
             link.Send(NetMessage.ClipboardText(text));
         };
+        _clipboard.ImageChanged += png => link.Send(NetMessage.ClipboardPng(png));
         _clipboard.Start();
     }
 

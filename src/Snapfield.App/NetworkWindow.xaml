@@ -12,6 +12,7 @@
             <Run Text="This PC: "/><Run Text="{Binding MachineName, Mode=OneWay}" FontWeight="Bold"/>
         </TextBlock>
         <TextBlock Text="{Binding RoleLabel}" Foreground="#9AB" Margin="0,2,0,0"/>
+        <TextBlock Text="{Binding LocalInfo}" Foreground="#7A8" Margin="0,1,0,0" FontSize="11"/>
 
         <!-- Live control-side indicator -->
         <Border Margin="0,12" CornerRadius="8" Padding="14" Background="{Binding SideBrush}">

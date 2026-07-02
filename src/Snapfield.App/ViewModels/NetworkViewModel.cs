@@ -32,10 +32,13 @@ public sealed class NetworkViewModel : ObservableObject
     public string MachineName { get; }
 
     private bool _isActive;
-    public bool IsActive { get => _isActive; private set { if (SetField(ref _isActive, value)) OnPropertyChanged(nameof(RoleLabel)); } }
+    public bool IsActive { get => _isActive; private set { if (SetField(ref _isActive, value)) { OnPropertyChanged(nameof(RoleLabel)); OnPropertyChanged(nameof(LocalInfo)); } } }
 
     private string _role = "Not connected";
     public string RoleLabel { get => IsActive ? _role : "Not connected"; }
+
+    private int _localCount;
+    public string LocalInfo => IsActive ? $"advertising {_localCount} monitor(s) of this PC" : "";
 
     private int _port = 45654;
     public int Port { get => _port; set => SetField(ref _port, value); }
@@ -71,6 +74,8 @@ public sealed class NetworkViewModel : ObservableObject
     private void StartSession(Action<NetworkSession> begin)
     {
         var monitors = new MonitorEnumerator().Enumerate();
+        _localCount = monitors.Count;
+        OnPropertyChanged(nameof(LocalInfo));
         _session = new NetworkSession(_machineId, monitors);
         _session.Status += OnStatus;
         _session.EngineStatus += OnEngineStatus;

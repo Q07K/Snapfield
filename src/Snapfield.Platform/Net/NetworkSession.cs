@@ -36,6 +36,8 @@ public sealed class NetworkSession : IDisposable
     public event Action<int>? ControllerReady;          // remote monitor count (controller)
     public event Action<long, int, int>? ReceiverActivity; // (count, x, y) injected (receiver)
 
+    public int LocalMonitorCount => _localMonitors.Count;
+
     public NetworkSession(string localMachineId, IReadOnlyList<MonitorInfo> localMonitors)
     {
         _localMachineId = localMachineId;
@@ -78,7 +80,8 @@ public sealed class NetworkSession : IDisposable
                 if (Role == PeerRole.Controller)
                     StartController(remoteMonitors);
                 else
-                    Status?.Invoke($"Connected to controller '{RemoteMachineId}'. Ready to be controlled.");
+                    Status?.Invoke($"Connected to controller '{RemoteMachineId}' " +
+                                   $"(it advertised {remoteMonitors.Count} monitor(s)). Ready to be controlled.");
                 break;
 
             // Receiver side: reproduce the controller's input locally.

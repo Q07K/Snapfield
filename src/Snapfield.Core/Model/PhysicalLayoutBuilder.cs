@@ -23,13 +23,19 @@ public static class PhysicalLayoutBuilder
         var primary = monitors.OrderBy(m => Math.Abs(m.PixelBounds.Left) + Math.Abs(m.PixelBounds.Top)).First();
         var mmPerPx = primary.PixelsPerMmX > 0 ? 1.0 / primary.PixelsPerMmX : FallbackMmPerPx;
 
+        // Uniform similarity transform of the Windows desktop: positions AND sizes
+        // share one scale. Mixing pixel-scaled positions with EDID sizes produced
+        // overlapping physical rects when densities differ wildly (e.g. a laptop
+        // panel next to a TV), which made edge probes hit a local monitor and the
+        // remote seam unreachable. Geometric consistency with pixel space is what
+        // the engine needs; true EDID placement returns via the calibration UI.
         return monitors.Select(m => m with
         {
             PhysicalBounds = new PhysicalRect(
                 m.PixelBounds.Left * mmPerPx,
                 m.PixelBounds.Top * mmPerPx,
-                m.PhysicalBounds.WidthMm > 0 ? m.PhysicalBounds.WidthMm : m.PixelBounds.Width * mmPerPx,
-                m.PhysicalBounds.HeightMm > 0 ? m.PhysicalBounds.HeightMm : m.PixelBounds.Height * mmPerPx),
+                m.PixelBounds.Width * mmPerPx,
+                m.PixelBounds.Height * mmPerPx),
         }).ToList();
     }
 

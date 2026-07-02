@@ -108,10 +108,12 @@ public sealed class NetworkSession : IDisposable
         _engine.ControlEnteredRemote += _ => _link.Send(NetMessage.Enter());
         _engine.ControlReturnedLocal += () => _link.Send(NetMessage.Leave());
         _engine.StatusChanged += s => EngineStatus?.Invoke(s);
-        _engine.Start();
 
+        // Publish the remote count BEFORE the engine's first status event so the
+        // UI never renders a stale "0 remote monitors".
         RemoteMonitorCount = remoteMonitors.Count;
         ControllerReady?.Invoke(remoteMonitors.Count);
+        _engine.Start();
         Status?.Invoke($"Controlling '{RemoteMachineId}' ({remoteMonitors.Count} remote monitor(s)). " +
                        "Push the cursor off the right edge to cross over.");
     }

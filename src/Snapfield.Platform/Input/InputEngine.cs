@@ -32,6 +32,7 @@ public sealed class InputEngine : IDisposable
     private readonly string _localMachineId;
     private readonly CursorRouter _router;
     private readonly LowLevelMouseHook _hook;
+    private readonly LowLevelKeyboardHook _kbHook;
 
     private double _mmPerPx = 0.25;      // fallback ~96 DPI; recomputed from layout
     private (int X, int Y) _center;      // local parking point during capture
@@ -47,6 +48,7 @@ public sealed class InputEngine : IDisposable
     public event Action<string, int, int>? RemoteCursor;   // (remoteMachineId, x, y)
     public event Action<int, bool>? RemoteButton;          // (button, down)
     public event Action<int, bool>? RemoteWheel;           // (delta, horizontal)
+    public event Action<int, int, bool, bool>? RemoteKey;  // (vk, scan, down, extended)
     public event Action<string>? ControlEnteredRemote;     // (remoteMachineId)
     public event Action? ControlReturnedLocal;
 
@@ -55,6 +57,7 @@ public sealed class InputEngine : IDisposable
         _localMachineId = localMachineId;
         _router = new CursorRouter(localMachineId, layout);
         _hook = new LowLevelMouseHook(OnMouseEvent);
+        _kbHook = new LowLevelKeyboardHook(OnKeyEvent);
         RecomputeFromLayout(layout);
     }
 
@@ -84,6 +87,7 @@ public sealed class InputEngine : IDisposable
         _router.SeatLocal(x, y);
         _captured = false;
         _hook.Start();
+        _kbHook.Start();
         IsRunning = true;
         RaiseStatus(force: true);
     }
@@ -92,9 +96,19 @@ public sealed class InputEngine : IDisposable
     {
         if (!IsRunning) return;
         _hook.Stop();
+        _kbHook.Stop();
         _captured = false;
         IsRunning = false;
         RaiseStatus(force: true);
+    }
+
+    // Runs on the keyboard-hook thread — keep it fast. While captured, keys go
+    // to the remote machine and are swallowed locally; when local, pass through.
+    private bool OnKeyEvent(KeyHookEvent e)
+    {
+        if (e.InjectedByUs || !_captured) return false;
+        RemoteKey?.Invoke(e.Vk, e.Scan, !e.Up, e.Extended);
+        return true;
     }
 
     // Runs on the hook thread — keep it fast.

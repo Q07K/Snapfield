@@ -62,6 +62,29 @@ public static class CursorInjector
     public static void Wheel(int delta, bool horizontal) =>
         Send(horizontal ? MOUSEEVENTF_HWHEEL : MOUSEEVENTF_WHEEL, (uint)delta);
 
+    /// <summary>Injects a keyboard transition (virtual key + scan code).</summary>
+    public static void KeyEvent(int vk, int scan, bool down, bool extended)
+    {
+        uint flags = 0;
+        if (!down) flags |= KEYEVENTF_KEYUP;
+        if (extended) flags |= KEYEVENTF_EXTENDEDKEY;
+        var input = new INPUT
+        {
+            type = INPUT_KEYBOARD,
+            U = new InputUnion
+            {
+                ki = new KEYBDINPUT
+                {
+                    wVk = (ushort)vk,
+                    wScan = (ushort)scan,
+                    dwFlags = flags,
+                    dwExtraInfo = SnapfieldSignature,
+                },
+            },
+        };
+        SendInput(1, new[] { input }, System.Runtime.InteropServices.Marshal.SizeOf<INPUT>());
+    }
+
     private static void Send(uint flags, uint mouseData)
     {
         var input = new INPUT

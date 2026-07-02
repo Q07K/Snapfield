@@ -45,7 +45,14 @@ public sealed class NetworkSession : IDisposable
 
         _link.Connected += OnConnected;
         _link.MessageReceived += OnMessage;
-        _link.Disconnected += reason => Status?.Invoke($"Disconnected: {reason}");
+        _link.Disconnected += reason =>
+        {
+            // Release the hooks/capture immediately: with the peer gone, swallowed
+            // mouse AND keyboard input would otherwise leave this machine locked.
+            _engine?.Dispose();
+            _engine = null;
+            Status?.Invoke($"Disconnected: {reason}");
+        };
     }
 
     public void Connect(string host, int port)
@@ -91,6 +98,7 @@ public sealed class NetworkSession : IDisposable
                 break;
             case MsgType.MouseButton: CursorInjector.MouseButton(msg.Button, msg.Down); break;
             case MsgType.MouseWheel: CursorInjector.Wheel(msg.WheelDelta, msg.Horizontal); break;
+            case MsgType.Key: CursorInjector.KeyEvent(msg.Vk, msg.Scan, msg.Down, msg.Extended); break;
             case MsgType.ControlEnter: Status?.Invoke("Controller took over this screen."); break;
             case MsgType.ControlLeave: Status?.Invoke("Controller left this screen."); break;
         }
@@ -105,6 +113,7 @@ public sealed class NetworkSession : IDisposable
         _engine.RemoteCursor += (_, x, y) => _link.Send(NetMessage.Cursor(x, y));
         _engine.RemoteButton += (b, down) => _link.Send(NetMessage.MouseBtn(b, down));
         _engine.RemoteWheel += (d, h) => _link.Send(NetMessage.Wheel(d, h));
+        _engine.RemoteKey += (vk, scan, down, ext) => _link.Send(NetMessage.KeyEvent(vk, scan, down, ext));
         _engine.ControlEnteredRemote += _ => _link.Send(NetMessage.Enter());
         _engine.ControlReturnedLocal += () => _link.Send(NetMessage.Leave());
         _engine.StatusChanged += s => EngineStatus?.Invoke(s);

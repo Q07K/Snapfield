@@ -13,6 +13,7 @@ public enum MsgType
     MouseWheel,   // WheelDelta, Horizontal
     ControlEnter, // control just entered the receiver
     ControlLeave, // control just left the receiver
+    Key,          // Vk, Scan, Down, Extended — keyboard transition
 }
 
 /// <summary>
@@ -31,6 +32,9 @@ public sealed record NetMessage
     public bool Down { get; init; }
     public int WheelDelta { get; init; }
     public bool Horizontal { get; init; }
+    public int Vk { get; init; }
+    public int Scan { get; init; }
+    public bool Extended { get; init; }
 
     private static readonly JsonSerializerOptions Json = new();
 
@@ -40,6 +44,8 @@ public sealed record NetMessage
     public static NetMessage Cursor(int x, int y) => new() { Type = MsgType.CursorMove, X = x, Y = y };
     public static NetMessage MouseBtn(int button, bool down) => new() { Type = MsgType.MouseButton, Button = button, Down = down };
     public static NetMessage Wheel(int delta, bool horizontal) => new() { Type = MsgType.MouseWheel, WheelDelta = delta, Horizontal = horizontal };
+    public static NetMessage KeyEvent(int vk, int scan, bool down, bool extended) =>
+        new() { Type = MsgType.Key, Vk = vk, Scan = scan, Down = down, Extended = extended };
     public static NetMessage Enter() => new() { Type = MsgType.ControlEnter };
     public static NetMessage Leave() => new() { Type = MsgType.ControlLeave };
 

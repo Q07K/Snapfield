@@ -6,6 +6,29 @@ namespace Snapfield.Platform.Input;
 internal static class InputInterop
 {
     public const int WH_MOUSE_LL = 14;
+    public const int WH_KEYBOARD_LL = 13;
+
+    public const int WM_KEYDOWN = 0x0100;
+    public const int WM_KEYUP = 0x0101;
+    public const int WM_SYSKEYDOWN = 0x0104;
+    public const int WM_SYSKEYUP = 0x0105;
+
+    public const uint LLKHF_EXTENDED = 0x01;
+    public const uint LLKHF_UP = 0x80;
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KBDLLHOOKSTRUCT
+    {
+        public uint vkCode;
+        public uint scanCode;
+        public uint flags;
+        public uint time;
+        public UIntPtr dwExtraInfo;
+    }
+
+    public const uint INPUT_KEYBOARD = 1;
+    public const uint KEYEVENTF_EXTENDEDKEY = 0x0001;
+    public const uint KEYEVENTF_KEYUP = 0x0002;
 
     public const int WM_MOUSEMOVE = 0x0200;
     public const int WM_LBUTTONDOWN = 0x0201;

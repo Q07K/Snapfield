@@ -13,8 +13,17 @@ public sealed class DesktopLayout
 
     public DesktopLayout(IEnumerable<MonitorInfo> monitors)
     {
-        Monitors = monitors.ToList();
-        _byKey = Monitors.ToDictionary(m => m.Key);
+        // Tolerate duplicate keys (e.g. a peer echoing monitors we also have):
+        // keep the first occurrence instead of crashing the whole session.
+        var list = new List<MonitorInfo>();
+        var byKey = new Dictionary<string, MonitorInfo>();
+        foreach (var m in monitors)
+        {
+            if (byKey.TryAdd(m.Key, m))
+                list.Add(m);
+        }
+        Monitors = list;
+        _byKey = byKey;
     }
 
     public IReadOnlyList<MonitorInfo> Monitors { get; }

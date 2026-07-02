@@ -1,6 +1,11 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using Button = System.Windows.Controls.Button;
+using Color = System.Windows.Media.Color;
+using HorizontalAlignment = System.Windows.HorizontalAlignment;
+using Orientation = System.Windows.Controls.Orientation;
+using TextBox = System.Windows.Controls.TextBox;
 
 namespace Snapfield.App;
 

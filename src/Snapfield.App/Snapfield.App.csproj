@@ -5,14 +5,28 @@
     <ProjectReference Include="..\Snapfield.Platform\Snapfield.Platform.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- UseWindowsForms injects global usings that collide with WPF types
+         (Application, TextBox, Brush, …). Only TrayManager touches WinForms,
+         and it imports the namespaces explicitly. -->
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+  </ItemGroup>
+
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <Version>0.6.3</Version>
+    <Version>0.7.0</Version>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <TargetFramework>net8.0-windows</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
+    <!-- WinForms only for NotifyIcon (tray) — WPF has no native tray support. -->
+    <UseWindowsForms>true</UseWindowsForms>
+    <!-- WFAC010: the WinForms analyzer wants DPI config moved out of the manifest,
+         but the PerMonitorV2 manifest entry is deliberate (loader-applied; the
+         runtime API loses the race against WPF's message window). -->
+    <NoWarn>$(NoWarn);WFAC010</NoWarn>
   </PropertyGroup>
 
 </Project>

@@ -3,7 +3,11 @@ using System.Net.Sockets;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
+using Brush = System.Windows.Media.Brush;
+using Brushes = System.Windows.Media.Brushes;
+using Color = System.Windows.Media.Color;
 using Snapfield.App.Mvvm;
+using Snapfield.Core.Persistence;
 using Snapfield.Platform.Input;
 using Snapfield.Platform.Monitors;
 using Snapfield.Platform.Net;
@@ -52,7 +56,7 @@ public sealed class NetworkViewModel : ObservableObject
     public NetMode Mode
     {
         get => _mode;
-        private set
+        set
         {
             if (SetField(ref _mode, value))
             {
@@ -98,12 +102,43 @@ public sealed class NetworkViewModel : ObservableObject
     // ── Actions ──────────────────────────────────────────────────────────────
     private void Listen()
     {
+        // Register the inbound firewall rule once (single UAC consent) so the
+        // controller can reach us without manual firewall work.
+        var vm = this;
+        new Thread(() =>
+        {
+            var msg = FirewallHelper.EnsureRule();
+            Application.Current?.Dispatcher.BeginInvoke(() => { if (vm.IsActive) vm.Status = msg; });
+        }) { IsBackground = true, Name = "Snapfield.Firewall" }.Start();
+
         StartSession(s => s.Listen(Port));
+        SettingsStore.Save(SettingsStore.Load() with { LastRole = "Receiver", LastPort = Port });
     }
 
     private void Connect()
     {
         StartSession(s => s.Connect(RemoteHost.Trim(), Port));
+        SettingsStore.Save(SettingsStore.Load() with { LastRole = "Controller", LastHost = RemoteHost.Trim(), LastPort = Port });
+    }
+
+    /// <summary>Re-starts the last session (called at app launch, before any window interaction).</summary>
+    public void RestoreLastSession()
+    {
+        var s = SettingsStore.Load();
+        switch (s.LastRole)
+        {
+            case "Receiver":
+                Port = s.LastPort;
+                Mode = NetMode.Receiver;
+                Listen();
+                break;
+            case "Controller" when !string.IsNullOrWhiteSpace(s.LastHost):
+                Port = s.LastPort;
+                RemoteHost = s.LastHost;
+                Mode = NetMode.Controller;
+                Connect();
+                break;
+        }
     }
 
     private void StartSession(Action<NetworkSession> begin)

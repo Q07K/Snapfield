@@ -4,9 +4,6 @@
         xmlns:vm="clr-namespace:Snapfield.App.ViewModels"
         Title="Snapfield — Network" Height="430" Width="460"
         Background="#1E1E22" Topmost="True" WindowStartupLocation="CenterScreen">
-    <Window.DataContext>
-        <vm:NetworkViewModel/>
-    </Window.DataContext>
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVis"/>
     </Window.Resources>

@@ -1,6 +1,9 @@
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
+using Brush = System.Windows.Media.Brush;
+using Brushes = System.Windows.Media.Brushes;
+using Color = System.Windows.Media.Color;
 using Snapfield.App.Mvvm;
 using Snapfield.Core.Geometry;
 using Snapfield.Core.Model;

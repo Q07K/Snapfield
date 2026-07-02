@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using Point = System.Windows.Point;
 using Snapfield.App.ViewModels;
 
 namespace Snapfield.App;
@@ -21,6 +22,18 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        var v = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+        Title = $"Snapfield — Calibration  (v{v?.ToString(3)})";
+
+        // Tray-resident: closing the window hides it; the app (and any network
+        // session) keeps running. Real exit is the tray menu's 종료.
+        Closing += (_, e) =>
+        {
+            if (App.Current.IsExiting) return;
+            e.Cancel = true;
+            Hide();
+            App.Current.NotifyHiddenToTray();
+        };
     }
 
     private EngineWindow? _engineWindow;
@@ -44,20 +57,10 @@ public partial class MainWindow : Window
         }
     }
 
-    private NetworkWindow? _networkWindow;
-
     private void OpenNetwork_Click(object sender, RoutedEventArgs e)
     {
-        if (_networkWindow is null)
-        {
-            _networkWindow = new NetworkWindow { Owner = this };
-            _networkWindow.Closed += (_, _) => _networkWindow = null;
-            _networkWindow.Show();
-        }
-        else
-        {
-            _networkWindow.Activate();
-        }
+        // App-owned so it works from the tray too (main window may be hidden).
+        App.Current.ShowNetwork();
     }
 
     private void Monitor_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)

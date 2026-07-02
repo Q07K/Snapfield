@@ -74,6 +74,8 @@ public sealed class NetworkViewModel : ObservableObject
         _session = new NetworkSession(_machineId, monitors);
         _session.Status += OnStatus;
         _session.EngineStatus += OnEngineStatus;
+        _session.ControllerReady += OnControllerReady;
+        _session.ReceiverActivity += OnReceiverActivity;
         begin(_session);
         IsActive = true;
     }
@@ -94,14 +96,28 @@ public sealed class NetworkViewModel : ObservableObject
     private void OnStatus(string s) =>
         Application.Current?.Dispatcher.BeginInvoke(() => Status = s);
 
+    private int _remoteCount;
+
     private void OnEngineStatus(EngineStatus s) =>
         Application.Current?.Dispatcher.BeginInvoke(() =>
         {
             var remote = s.Captured || s.ActiveIsRemote;
             Side = remote ? "REMOTE — controlling other PC" : "LOCAL";
-            Detail = $"{s.ActiveMonitor}   ({s.VirtualXMm:0} mm, {s.VirtualYMm:0} mm)";
+            Detail = $"{s.ActiveMonitor}   ({s.VirtualXMm:0} mm, {s.VirtualYMm:0} mm)   ·   remote monitors: {_remoteCount}";
             SideBrush = remote
                 ? new SolidColorBrush(Color.FromRgb(0xE0, 0x8A, 0x2A))
                 : new SolidColorBrush(Color.FromRgb(0x2E, 0xA0, 0x43));
+        });
+
+    private void OnControllerReady(int remoteCount) =>
+        Application.Current?.Dispatcher.BeginInvoke(() => _remoteCount = remoteCount);
+
+    // Receiver side: prove packets are arriving by lighting up on each injected move.
+    private void OnReceiverActivity(long count, int x, int y) =>
+        Application.Current?.Dispatcher.BeginInvoke(() =>
+        {
+            Side = "RECEIVING — being controlled";
+            Detail = $"{count} moves · last pixel ({x}, {y})";
+            SideBrush = new SolidColorBrush(Color.FromRgb(0x2E, 0xA0, 0x43));
         });
 }

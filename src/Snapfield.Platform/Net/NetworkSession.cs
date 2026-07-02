@@ -27,9 +27,14 @@ public sealed class NetworkSession : IDisposable
 
     public PeerRole Role { get; private set; } = PeerRole.None;
     public string RemoteMachineId { get; private set; } = "";
+    public int RemoteMonitorCount { get; private set; }
+
+    private long _rxCount;
 
     public event Action<string>? Status;
     public event Action<EngineStatus>? EngineStatus;
+    public event Action<int>? ControllerReady;          // remote monitor count (controller)
+    public event Action<long, int, int>? ReceiverActivity; // (count, x, y) injected (receiver)
 
     public NetworkSession(string localMachineId, IReadOnlyList<MonitorInfo> localMonitors)
     {
@@ -77,7 +82,10 @@ public sealed class NetworkSession : IDisposable
                 break;
 
             // Receiver side: reproduce the controller's input locally.
-            case MsgType.CursorMove: CursorInjector.WarpTo(msg.X, msg.Y); break;
+            case MsgType.CursorMove:
+                CursorInjector.WarpTo(msg.X, msg.Y);
+                ReceiverActivity?.Invoke(++_rxCount, msg.X, msg.Y);
+                break;
             case MsgType.MouseButton: CursorInjector.MouseButton(msg.Button, msg.Down); break;
             case MsgType.MouseWheel: CursorInjector.Wheel(msg.WheelDelta, msg.Horizontal); break;
             case MsgType.ControlEnter: Status?.Invoke("Controller took over this screen."); break;
@@ -99,6 +107,8 @@ public sealed class NetworkSession : IDisposable
         _engine.StatusChanged += s => EngineStatus?.Invoke(s);
         _engine.Start();
 
+        RemoteMonitorCount = remoteMonitors.Count;
+        ControllerReady?.Invoke(remoteMonitors.Count);
         Status?.Invoke($"Controlling '{RemoteMachineId}' ({remoteMonitors.Count} remote monitor(s)). " +
                        "Push the cursor off the right edge to cross over.");
     }

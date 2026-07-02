@@ -4,7 +4,6 @@ using System.Windows.Media;
 using Snapfield.App.Mvvm;
 using Snapfield.Core.Geometry;
 using Snapfield.Core.Model;
-using Snapfield.Core.Persistence;
 using Snapfield.Platform.Input;
 using Snapfield.Platform.Monitors;
 
@@ -106,28 +105,50 @@ public sealed class EngineViewModel : ObservableObject
     }
 
     // ── Layout construction ──────────────────────────────────────────────────
+    // For the single-machine phantom test the engine detects edges in Windows
+    // pixel space but routes in physical space, so the two MUST agree on the
+    // monitor arrangement. We therefore build the physical layout directly from
+    // the Windows pixel arrangement (real EDID sizes, Windows ordering/offsets)
+    // instead of the drag-calibrated layout — otherwise a mismatch makes the
+    // phantom unreachable. The drag calibration is for the cross-machine phase.
     private DesktopLayout BuildLayout()
     {
         var detected = new MonitorEnumerator().Enumerate();
-        var saved = LayoutStore.Load(AppPaths.LayoutFile);
-        var layout = LayoutStore.Merge(detected, saved);
-        if (!UsePhantom) return layout;
+        var local = BuildWindowsAlignedLayout(detected);
+        if (!UsePhantom || local.Count == 0) return new DesktopLayout(local);
 
-        var monitors = layout.Monitors.ToList();
-        monitors.Add(MakePhantom(layout));
-        return new DesktopLayout(monitors);
+        local.Add(MakePhantom(local));
+        return new DesktopLayout(local);
     }
 
-    /// <summary>A virtual 24" 1080p "remote" monitor placed just right of the real layout.</summary>
-    private static MonitorInfo MakePhantom(DesktopLayout layout)
+    /// <summary>
+    /// Places each monitor on the physical plane using its Windows pixel position
+    /// (scaled by the primary monitor's density) so ordering and offsets match the
+    /// OS, while keeping each monitor's real EDID physical size.
+    /// </summary>
+    private static List<MonitorInfo> BuildWindowsAlignedLayout(IReadOnlyList<MonitorInfo> detected)
     {
-        double rightMm = 0, midY = 150;
-        if (layout.Monitors.Count > 0)
+        if (detected.Count == 0) return new List<MonitorInfo>();
+
+        // Primary ≈ the monitor nearest the pixel origin (0,0).
+        var primary = detected.OrderBy(m => Math.Abs(m.PixelBounds.Left) + Math.Abs(m.PixelBounds.Top)).First();
+        var mmPerPx = primary.PixelsPerMmX > 0 ? 1.0 / primary.PixelsPerMmX : 0.2645;
+
+        return detected.Select(m => m with
         {
-            rightMm = layout.Monitors.Max(m => m.PhysicalBounds.Right);
-            var b = layout.Bounds;
-            midY = b.YMm + b.HeightMm / 2;
-        }
+            PhysicalBounds = new PhysicalRect(
+                m.PixelBounds.Left * mmPerPx,
+                m.PixelBounds.Top * mmPerPx,
+                m.PhysicalBounds.WidthMm > 0 ? m.PhysicalBounds.WidthMm : m.PixelBounds.Width * mmPerPx,
+                m.PhysicalBounds.HeightMm > 0 ? m.PhysicalBounds.HeightMm : m.PixelBounds.Height * mmPerPx),
+        }).ToList();
+    }
+
+    /// <summary>A virtual 24" 1080p "remote" monitor glued to the physical right of
+    /// the right-most monitor (which is the reachable right edge of the desktop).</summary>
+    private static MonitorInfo MakePhantom(IReadOnlyList<MonitorInfo> local)
+    {
+        var anchor = local.OrderByDescending(m => m.PhysicalBounds.Right).First();
         const double wMm = 531.4, hMm = 298.9;
         return new MonitorInfo
         {
@@ -135,7 +156,10 @@ public sealed class EngineViewModel : ObservableObject
             DeviceId = "phantom-24",
             DisplayName = "Phantom 24\" (remote sim)",
             PixelBounds = new PixelRect(0, 0, 1920, 1080),
-            PhysicalBounds = new PhysicalRect(rightMm, midY - hMm / 2, wMm, hMm),
+            PhysicalBounds = new PhysicalRect(
+                anchor.PhysicalBounds.Right,
+                anchor.PhysicalBounds.Center.YMm - hMm / 2,
+                wMm, hMm),
         };
     }
 }

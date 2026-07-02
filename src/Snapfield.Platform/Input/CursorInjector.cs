@@ -43,4 +43,35 @@ public static class CursorInjector
         };
         SendInput(1, new[] { input }, System.Runtime.InteropServices.Marshal.SizeOf<INPUT>());
     }
+
+    /// <summary>Injects a mouse button transition at the current cursor position.</summary>
+    public static void MouseButton(int button, bool down)
+    {
+        uint flags = button switch
+        {
+            0 => down ? MOUSEEVENTF_LEFTDOWN : MOUSEEVENTF_LEFTUP,
+            1 => down ? MOUSEEVENTF_RIGHTDOWN : MOUSEEVENTF_RIGHTUP,
+            2 => down ? MOUSEEVENTF_MIDDLEDOWN : MOUSEEVENTF_MIDDLEUP,
+            _ => 0,
+        };
+        if (flags == 0) return;
+        Send(flags, 0);
+    }
+
+    /// <summary>Injects a wheel scroll (vertical unless <paramref name="horizontal"/>).</summary>
+    public static void Wheel(int delta, bool horizontal) =>
+        Send(horizontal ? MOUSEEVENTF_HWHEEL : MOUSEEVENTF_WHEEL, (uint)delta);
+
+    private static void Send(uint flags, uint mouseData)
+    {
+        var input = new INPUT
+        {
+            type = INPUT_MOUSE,
+            U = new InputUnion
+            {
+                mi = new MOUSEINPUT { dwFlags = flags, mouseData = mouseData, dwExtraInfo = SnapfieldSignature },
+            },
+        };
+        SendInput(1, new[] { input }, System.Runtime.InteropServices.Marshal.SizeOf<INPUT>());
+    }
 }

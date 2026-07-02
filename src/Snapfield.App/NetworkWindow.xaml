@@ -1,0 +1,45 @@
+<Window x:Class="Snapfield.App.NetworkWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="clr-namespace:Snapfield.App.ViewModels"
+        Title="Snapfield — Network" Height="440" Width="460"
+        Background="#1E1E22" Topmost="True" WindowStartupLocation="CenterScreen">
+    <Window.DataContext>
+        <vm:NetworkViewModel/>
+    </Window.DataContext>
+    <StackPanel Margin="16">
+        <TextBlock Foreground="#EEE" FontSize="15">
+            <Run Text="This PC: "/><Run Text="{Binding MachineName, Mode=OneWay}" FontWeight="Bold"/>
+        </TextBlock>
+        <TextBlock Text="{Binding RoleLabel}" Foreground="#9AB" Margin="0,2,0,0"/>
+
+        <!-- Live control-side indicator -->
+        <Border Margin="0,12" CornerRadius="8" Padding="14" Background="{Binding SideBrush}">
+            <StackPanel>
+                <TextBlock Text="{Binding Side}" Foreground="White" FontSize="18" FontWeight="Bold"
+                           HorizontalAlignment="Center"/>
+                <TextBlock Text="{Binding Detail}" Foreground="#EEE" HorizontalAlignment="Center"
+                           FontSize="11" Margin="0,4,0,0"/>
+            </StackPanel>
+        </Border>
+
+        <TextBlock Text="Port" Foreground="#AAB" Margin="0,4,0,2"/>
+        <TextBox Text="{Binding Port}" Width="100" HorizontalAlignment="Left"/>
+
+        <Separator Margin="0,14"/>
+
+        <TextBlock Text="① 상대(제어당할) PC에서:" Foreground="#CDE" Margin="0,0,0,4"/>
+        <Button Content="Listen (be receiver)" Command="{Binding ListenCommand}" Padding="12,6" HorizontalAlignment="Left"/>
+
+        <TextBlock Text="② 내(제어할) PC에서: 상대 PC의 IP 입력 후 연결" Foreground="#CDE" Margin="0,14,0,4"/>
+        <StackPanel Orientation="Horizontal">
+            <TextBox Text="{Binding RemoteHost, UpdateSourceTrigger=PropertyChanged}" Width="200"
+                     VerticalContentAlignment="Center"/>
+            <Button Content="Connect (be controller)" Command="{Binding ConnectCommand}" Padding="12,6" Margin="8,0,0,0"/>
+        </StackPanel>
+
+        <Button Content="Stop" Command="{Binding StopCommand}" Padding="12,6" HorizontalAlignment="Left" Margin="0,14,0,0"/>
+
+        <TextBlock Text="{Binding Status}" Foreground="#889" TextWrapping="Wrap" Margin="0,14,0,0" FontSize="11"/>
+    </StackPanel>
+</Window>

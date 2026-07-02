@@ -44,6 +44,22 @@ public partial class MainWindow : Window
         }
     }
 
+    private NetworkWindow? _networkWindow;
+
+    private void OpenNetwork_Click(object sender, RoutedEventArgs e)
+    {
+        if (_networkWindow is null)
+        {
+            _networkWindow = new NetworkWindow { Owner = this };
+            _networkWindow.Closed += (_, _) => _networkWindow = null;
+            _networkWindow.Show();
+        }
+        else
+        {
+            _networkWindow.Activate();
+        }
+    }
+
     private void Monitor_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
         var border = (FrameworkElement)sender;

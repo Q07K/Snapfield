@@ -114,52 +114,19 @@ public sealed class EngineViewModel : ObservableObject
     private DesktopLayout BuildLayout()
     {
         var detected = new MonitorEnumerator().Enumerate();
-        var local = BuildWindowsAlignedLayout(detected);
+        var local = PhysicalLayoutBuilder.WindowsAligned(detected);
         if (!UsePhantom || local.Count == 0) return new DesktopLayout(local);
 
-        local.Add(MakePhantom(local));
-        return new DesktopLayout(local);
+        return new DesktopLayout(PhysicalLayoutBuilder.AppendToRight(local, new[] { MakePhantom() }));
     }
 
-    /// <summary>
-    /// Places each monitor on the physical plane using its Windows pixel position
-    /// (scaled by the primary monitor's density) so ordering and offsets match the
-    /// OS, while keeping each monitor's real EDID physical size.
-    /// </summary>
-    private static List<MonitorInfo> BuildWindowsAlignedLayout(IReadOnlyList<MonitorInfo> detected)
+    /// <summary>A virtual 24" 1080p "remote" monitor; the builder positions it to the right.</summary>
+    private static MonitorInfo MakePhantom() => new()
     {
-        if (detected.Count == 0) return new List<MonitorInfo>();
-
-        // Primary ≈ the monitor nearest the pixel origin (0,0).
-        var primary = detected.OrderBy(m => Math.Abs(m.PixelBounds.Left) + Math.Abs(m.PixelBounds.Top)).First();
-        var mmPerPx = primary.PixelsPerMmX > 0 ? 1.0 / primary.PixelsPerMmX : 0.2645;
-
-        return detected.Select(m => m with
-        {
-            PhysicalBounds = new PhysicalRect(
-                m.PixelBounds.Left * mmPerPx,
-                m.PixelBounds.Top * mmPerPx,
-                m.PhysicalBounds.WidthMm > 0 ? m.PhysicalBounds.WidthMm : m.PixelBounds.Width * mmPerPx,
-                m.PhysicalBounds.HeightMm > 0 ? m.PhysicalBounds.HeightMm : m.PixelBounds.Height * mmPerPx),
-        }).ToList();
-    }
-
-    /// <summary>A virtual 24" 1080p "remote" monitor glued to the physical right of
-    /// the right-most monitor (which is the reachable right edge of the desktop).</summary>
-    private static MonitorInfo MakePhantom(IReadOnlyList<MonitorInfo> local)
-    {
-        var anchor = local.OrderByDescending(m => m.PhysicalBounds.Right).First();
-        const double wMm = 531.4, hMm = 298.9;
-        return new MonitorInfo
-        {
-            MachineId = "PHANTOM",
-            DeviceId = "phantom-24",
-            DisplayName = "Phantom 24\" (remote sim)",
-            PixelBounds = new PixelRect(0, 0, 1920, 1080),
-            PhysicalBounds = new PhysicalRect(
-                anchor.PhysicalBounds.Right,
-                anchor.PhysicalBounds.Center.YMm - hMm / 2,
-                wMm, hMm),
-        };
-    }
+        MachineId = "PHANTOM",
+        DeviceId = "phantom-24",
+        DisplayName = "Phantom 24\" (remote sim)",
+        PixelBounds = new PixelRect(0, 0, 1920, 1080),
+        PhysicalBounds = new PhysicalRect(0, 0, 531.4, 298.9),
+    };
 }

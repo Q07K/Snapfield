@@ -43,6 +43,13 @@ public sealed class InputEngine : IDisposable
 
     public event Action<EngineStatus>? StatusChanged;
 
+    // Raised while control is on a remote monitor, for the network layer to forward.
+    public event Action<string, int, int>? RemoteCursor;   // (remoteMachineId, x, y)
+    public event Action<int, bool>? RemoteButton;          // (button, down)
+    public event Action<int, bool>? RemoteWheel;           // (delta, horizontal)
+    public event Action<string>? ControlEnteredRemote;     // (remoteMachineId)
+    public event Action? ControlReturnedLocal;
+
     public InputEngine(string localMachineId, DesktopLayout layout)
     {
         _localMachineId = localMachineId;
@@ -98,9 +105,14 @@ public sealed class InputEngine : IDisposable
         if (e.Message == WM_MOUSEMOVE)
             return OnMove(e.X, e.Y);
 
-        // Buttons / wheel: swallow everything while captured (would otherwise act
-        // on the parked local cursor). Pass through when local.
-        return _captured;
+        // Buttons / wheel: forward to the remote and swallow locally while captured
+        // (they would otherwise act on the parked local cursor). Pass through when local.
+        if (_captured)
+        {
+            ForwardButtonOrWheel(e);
+            return true;
+        }
+        return false;
     }
 
     private bool OnMove(int x, int y)
@@ -110,7 +122,7 @@ public sealed class InputEngine : IDisposable
             var res = _router.OnLocalAbsolute(x, y);
             if (res.Transition == RouteTransition.ToRemote)
             {
-                EnterCapture();
+                EnterCapture(res);
                 return true; // stop this move; cursor is now parked
             }
             return false; // normal local movement
@@ -126,21 +138,49 @@ public sealed class InputEngine : IDisposable
             _captured = false;
             var (px, py) = result.PixelInt;
             CursorInjector.WarpTo(px, py);
+            ControlReturnedLocal?.Invoke();
             RaiseStatus(force: true);
             return true;
         }
 
-        // Still remote: reset the parking point so we always have headroom.
+        // Still remote: stream the position to the remote, then reset the parking
+        // point so we always have movement headroom locally.
+        if (result.Owner is not null)
+        {
+            var (px, py) = result.PixelInt;
+            RemoteCursor?.Invoke(result.Owner.MachineId, px, py);
+        }
         CursorInjector.WarpTo(_center.X, _center.Y);
         RaiseStatus(force: false);
         return true;
     }
 
-    private void EnterCapture()
+    private void EnterCapture(Snapfield.Core.Input.RouteResult res)
     {
         _captured = true;
         CursorInjector.WarpTo(_center.X, _center.Y);
+        if (res.Owner is not null)
+        {
+            ControlEnteredRemote?.Invoke(res.Owner.MachineId);
+            var (px, py) = res.PixelInt;
+            RemoteCursor?.Invoke(res.Owner.MachineId, px, py); // seed remote cursor at entry point
+        }
         RaiseStatus(force: true);
+    }
+
+    private void ForwardButtonOrWheel(MouseHookEvent e)
+    {
+        switch (e.Message)
+        {
+            case WM_LBUTTONDOWN: RemoteButton?.Invoke(0, true); break;
+            case WM_LBUTTONUP: RemoteButton?.Invoke(0, false); break;
+            case WM_RBUTTONDOWN: RemoteButton?.Invoke(1, true); break;
+            case WM_RBUTTONUP: RemoteButton?.Invoke(1, false); break;
+            case WM_MBUTTONDOWN: RemoteButton?.Invoke(2, true); break;
+            case WM_MBUTTONUP: RemoteButton?.Invoke(2, false); break;
+            case WM_MOUSEWHEEL: RemoteWheel?.Invoke(unchecked((short)(e.MouseData >> 16)), false); break;
+            case WM_MOUSEHWHEEL: RemoteWheel?.Invoke(unchecked((short)(e.MouseData >> 16)), true); break;
+        }
     }
 
     private void RaiseStatus(bool force)

@@ -21,7 +21,8 @@
                 <Button Content="Re-detect" Command="{Binding ReDetectCommand}" Margin="0,0,8,0" Padding="12,4"/>
                 <Button Content="Auto-arrange" Command="{Binding AutoArrangeCommand}" Margin="0,0,8,0" Padding="12,4"/>
                 <Button Content="Save layout" Command="{Binding SaveCommand}" Padding="12,4" Margin="0,0,8,0"/>
-                <Button Content="Input Engine…" Click="OpenEngine_Click" Padding="12,4"/>
+                <Button Content="Input Engine…" Click="OpenEngine_Click" Padding="12,4" Margin="0,0,8,0"/>
+                <Button Content="Network…" Click="OpenNetwork_Click" Padding="12,4"/>
                 <TextBlock Text="Drag monitors to match their real physical arrangement. Edges snap."
                            Foreground="#999" VerticalAlignment="Center" Margin="20,0,0,0"/>
             </StackPanel>

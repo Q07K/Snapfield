@@ -191,6 +191,21 @@ public sealed class CalibrationViewModel : ObservableObject
         StatusText = $"Saved to {AppPaths.LayoutFile}";
     }
 
+    /// <summary>Removes a REMOTE monitor from the plane (a stale peer). Local
+    /// monitors are physically attached and would only re-appear on re-detect.</summary>
+    public void RemoveMonitor(MonitorViewModel m)
+    {
+        if (!m.IsRemote)
+        {
+            StatusText = "로컬 모니터는 제거할 수 없습니다 (실제 연결된 화면).";
+            return;
+        }
+        Monitors.Remove(m);
+        RecomputeTransform();
+        Save(); // persist immediately so it stays gone on the next load
+        StatusText = $"'{m.MachineId}' 모니터를 평면에서 제거했습니다. 다시 연결하면 다시 나타납니다.";
+    }
+
     private void Populate(DesktopLayout layout)
     {
         Monitors.Clear();

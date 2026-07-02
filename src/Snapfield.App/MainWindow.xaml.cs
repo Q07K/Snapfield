@@ -87,6 +87,12 @@ public partial class MainWindow : Window
         _dragging.DragTo(_dragStartXMm + dxMm, _dragStartYMm + dyMm);
     }
 
+    private void RemoveMonitor_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is ViewModels.MonitorViewModel m)
+            Vm.RemoveMonitor(m);
+    }
+
     private void Monitor_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
         if (_dragging is null) return;

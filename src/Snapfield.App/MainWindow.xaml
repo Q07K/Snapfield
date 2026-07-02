@@ -56,6 +56,11 @@
                             MouseLeftButtonDown="Monitor_MouseLeftButtonDown"
                             MouseMove="Monitor_MouseMove"
                             MouseLeftButtonUp="Monitor_MouseLeftButtonUp">
+                        <Border.ContextMenu>
+                            <ContextMenu>
+                                <MenuItem Header="평면에서 제거 (원격 모니터만)" Click="RemoveMonitor_Click"/>
+                            </ContextMenu>
+                        </Border.ContextMenu>
                         <Border.Style>
                             <Style TargetType="Border">
                                 <Setter Property="Background" Value="#2E5CB8"/>
@@ -65,9 +70,10 @@
                                         <Setter Property="Background" Value="#B8722E"/>
                                         <Setter Property="BorderBrush" Value="#E0A44A"/>
                                     </DataTrigger>
+                                    <!-- Selection only brightens the border so the
+                                         remote (orange) vs local (blue) fill stays readable. -->
                                     <DataTrigger Binding="{Binding IsSelected}" Value="True">
-                                        <Setter Property="Background" Value="#3B77E8"/>
-                                        <Setter Property="BorderBrush" Value="#9FC0FF"/>
+                                        <Setter Property="BorderBrush" Value="#FFFFFF"/>
                                     </DataTrigger>
                                 </Style.Triggers>
                             </Style>

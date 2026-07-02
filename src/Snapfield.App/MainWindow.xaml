@@ -61,6 +61,10 @@
                                 <Setter Property="Background" Value="#2E5CB8"/>
                                 <Setter Property="BorderBrush" Value="#4A7BE0"/>
                                 <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsRemote}" Value="True">
+                                        <Setter Property="Background" Value="#B8722E"/>
+                                        <Setter Property="BorderBrush" Value="#E0A44A"/>
+                                    </DataTrigger>
                                     <DataTrigger Binding="{Binding IsSelected}" Value="True">
                                         <Setter Property="Background" Value="#3B77E8"/>
                                         <Setter Property="BorderBrush" Value="#9FC0FF"/>
@@ -70,6 +74,8 @@
                         </Border.Style>
                         <Viewbox Margin="6" MaxHeight="90">
                             <StackPanel>
+                                <TextBlock Text="{Binding MachineId}" Foreground="#FFE9B0" FontSize="9"
+                                           HorizontalAlignment="Center"/>
                                 <TextBlock Text="{Binding DisplayName}" Foreground="White"
                                            FontWeight="SemiBold" HorizontalAlignment="Center"/>
                                 <TextBlock Text="{Binding ResolutionText}" Foreground="#DDE"

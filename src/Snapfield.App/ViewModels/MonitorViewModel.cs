@@ -33,6 +33,9 @@ public sealed class MonitorViewModel : ObservableObject
     public string MachineId { get; }
     public string DeviceId { get; }
     public string DisplayName { get; }
+
+    /// <summary>True when this monitor belongs to another machine on the plane.</summary>
+    public bool IsRemote => MachineId != Environment.MachineName;
     public int PixelWidth { get; }
     public int PixelHeight { get; }
     public int PixelLeft { get; }

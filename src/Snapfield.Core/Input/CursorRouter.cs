@@ -28,6 +28,12 @@ public sealed class CursorRouter
     /// <summary>How far (mm) to probe across an edge when testing for a remote neighbour.</summary>
     public double ProbeMm { get; set; } = 1.0;
 
+    /// <summary>
+    /// Second, longer probe (mm) so a small calibration gap between a local edge
+    /// and the remote monitor doesn't make the seam impossible to cross.
+    /// </summary>
+    public double GapProbeMm { get; set; } = 30.0;
+
     public CursorRouter(string localMachineId, DesktopLayout layout)
     {
         _localMachineId = localMachineId;
@@ -134,37 +140,48 @@ public sealed class CursorRouter
         // Right edge.
         if (pixelX >= pb.Right - 1)
         {
-            var probe = new PhysicalPoint(local.PhysicalBounds.Right + ProbeMm, p.YMm);
-            var hit = RemoteHit(probe);
-            if (hit is not null) return new Handoff(hit, hit.PhysicalBounds.Clamp(probe));
+            var h = ProbeDirection(local, p, dx: +1, dy: 0);
+            if (h is not null) return h;
         }
         // Left edge.
         if (pixelX <= pb.Left)
         {
-            var probe = new PhysicalPoint(local.PhysicalBounds.XMm - ProbeMm, p.YMm);
-            var hit = RemoteHit(probe);
-            if (hit is not null) return new Handoff(hit, hit.PhysicalBounds.Clamp(probe));
+            var h = ProbeDirection(local, p, dx: -1, dy: 0);
+            if (h is not null) return h;
         }
         // Bottom edge.
         if (pixelY >= pb.Bottom - 1)
         {
-            var probe = new PhysicalPoint(p.XMm, local.PhysicalBounds.Bottom + ProbeMm);
-            var hit = RemoteHit(probe);
-            if (hit is not null) return new Handoff(hit, hit.PhysicalBounds.Clamp(probe));
+            var h = ProbeDirection(local, p, dx: 0, dy: +1);
+            if (h is not null) return h;
         }
         // Top edge.
         if (pixelY <= pb.Top)
         {
-            var probe = new PhysicalPoint(p.XMm, local.PhysicalBounds.YMm - ProbeMm);
-            var hit = RemoteHit(probe);
-            if (hit is not null) return new Handoff(hit, hit.PhysicalBounds.Clamp(probe));
+            var h = ProbeDirection(local, p, dx: 0, dy: -1);
+            if (h is not null) return h;
         }
         return null;
     }
 
-    private MonitorInfo? RemoteHit(PhysicalPoint probe)
+    /// <summary>
+    /// Probes just beyond the given edge, then again across a small gap. A local
+    /// monitor at the near probe blocks the seam (Windows owns that transition);
+    /// an empty near probe lets the far probe bridge a calibration gap.
+    /// </summary>
+    private Handoff? ProbeDirection(MonitorInfo local, PhysicalPoint p, int dx, int dy)
     {
-        var m = _mapper.HitTest(probe);
-        return m is not null && m.MachineId != _localMachineId ? m : null;
+        foreach (var distance in new[] { ProbeMm, GapProbeMm })
+        {
+            var probe = new PhysicalPoint(
+                dx == 0 ? p.XMm : (dx > 0 ? local.PhysicalBounds.Right : local.PhysicalBounds.XMm) + dx * distance,
+                dy == 0 ? p.YMm : (dy > 0 ? local.PhysicalBounds.Bottom : local.PhysicalBounds.YMm) + dy * distance);
+
+            var m = _mapper.HitTest(probe);
+            if (m is null) continue;                       // gap — try the longer probe
+            if (m.MachineId == _localMachineId) return null; // a local monitor owns this seam
+            return new Handoff(m, m.PhysicalBounds.Clamp(probe));
+        }
+        return null;
     }
 }

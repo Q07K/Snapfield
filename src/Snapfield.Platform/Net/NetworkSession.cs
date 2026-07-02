@@ -63,10 +63,23 @@ public sealed class NetworkSession : IDisposable
         }
     }
 
+    private IReadOnlyList<MonitorInfo> _lastRemoteMonitors = Array.Empty<MonitorInfo>();
+
     public NetworkSession(string localMachineId, IReadOnlyList<MonitorInfo> localMonitors)
     {
         _localMachineId = localMachineId;
         _localMonitors = localMonitors;
+        LayoutStore.Saved += OnLayoutSaved;
+    }
+
+    /// <summary>Re-route against the newly calibrated plane without reconnecting.</summary>
+    private void OnLayoutSaved()
+    {
+        if (_disposed || _engine is null || Role != PeerRole.Controller) return;
+        var combined = PhysicalLayoutBuilder.Calibrated(
+            _localMonitors, _lastRemoteMonitors, LayoutStore.Load(LayoutStore.DefaultPath));
+        _engine.UpdateLayout(new DesktopLayout(combined));
+        Status?.Invoke("Calibration applied to the live session.");
     }
 
     public void Connect(string host, int port)
@@ -175,9 +188,15 @@ public sealed class NetworkSession : IDisposable
     private void StartController(PeerLink link, IReadOnlyList<MonitorInfo> remoteMonitors)
     {
         _engine?.Dispose(); // a reconnect replaces any previous engine
+        _lastRemoteMonitors = remoteMonitors;
 
-        var local = PhysicalLayoutBuilder.WindowsAligned(_localMonitors);
-        var combined = new DesktopLayout(PhysicalLayoutBuilder.AppendToRight(local, remoteMonitors));
+        // Route the way the user calibrated it; un-calibrated monitors fall back
+        // to the automatic arrangement (locals Windows-aligned, remotes appended
+        // right). Then persist the combined plane so the calibration canvas shows
+        // the remote monitors and the user can drag them into place.
+        var saved = LayoutStore.Load(LayoutStore.DefaultPath);
+        var combined = new DesktopLayout(PhysicalLayoutBuilder.Calibrated(_localMonitors, remoteMonitors, saved));
+        PersistPlane(combined, saved);
 
         _engine = new InputEngine(_localMachineId, combined) { Sensitivity = _sensitivity };
         _engine.RemoteCursor += (_, x, y) => link.Send(NetMessage.Cursor(x, y));
@@ -197,10 +216,28 @@ public sealed class NetworkSession : IDisposable
                        "Push the cursor off the right edge to cross over.");
     }
 
+    /// <summary>
+    /// Saves the combined plane while preserving calibrated monitors of machines
+    /// that are not part of this session (a third PC calibrated earlier must not
+    /// be dropped by a two-machine connection).
+    /// </summary>
+    private void PersistPlane(DesktopLayout combined, DesktopLayout? saved)
+    {
+        try
+        {
+            var sessionMachines = combined.Monitors.Select(m => m.MachineId).ToHashSet();
+            var others = saved?.Monitors.Where(m => !sessionMachines.Contains(m.MachineId))
+                         ?? Enumerable.Empty<MonitorInfo>();
+            LayoutStore.Save(LayoutStore.DefaultPath, new DesktopLayout(combined.Monitors.Concat(others)));
+        }
+        catch { /* persistence is best-effort; routing already has the layout */ }
+    }
+
     public void Dispose()
     {
         _disposed = true;
         _linkGen++; // invalidate any pending reconnect
+        LayoutStore.Saved -= OnLayoutSaved;
         _engine?.Dispose();
         _link?.Dispose();
     }

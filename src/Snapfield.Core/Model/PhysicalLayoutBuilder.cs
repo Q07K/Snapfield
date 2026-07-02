@@ -1,4 +1,5 @@
 using Snapfield.Core.Geometry;
+using Snapfield.Core.Persistence;
 
 namespace Snapfield.Core.Model;
 
@@ -37,6 +38,43 @@ public static class PhysicalLayoutBuilder
                 m.PixelBounds.Width * mmPerPx,
                 m.PixelBounds.Height * mmPerPx),
         }).ToList();
+    }
+
+    /// <summary>
+    /// Builds the routing layout the way the user calibrated it: every monitor
+    /// (local or remote) whose key exists in <paramref name="saved"/> takes its
+    /// saved physical placement; local monitors without one fall back to the
+    /// Windows-aligned uniform transform, and remote monitors without one are
+    /// appended to the right of the plane (the pre-calibration default).
+    /// Detected pixel bounds always win over saved ones — the OS is the truth
+    /// for pixel space; the calibration file is the truth for physical space.
+    /// </summary>
+    public static List<MonitorInfo> Calibrated(
+        IReadOnlyList<MonitorInfo> localDetected,
+        IReadOnlyList<MonitorInfo> remote,
+        DesktopLayout? saved)
+    {
+        var localAligned = WindowsAligned(localDetected);
+        var result = new List<MonitorInfo>();
+        for (var i = 0; i < localDetected.Count; i++)
+        {
+            var prior = saved?.Find(localDetected[i].Key);
+            result.Add(prior is null
+                ? localAligned[i]
+                : localDetected[i] with { PhysicalBounds = prior.PhysicalBounds });
+        }
+
+        var placedRemote = new List<MonitorInfo>();
+        var unplacedRemote = new List<MonitorInfo>();
+        foreach (var r in remote)
+        {
+            var prior = saved?.Find(r.Key);
+            if (prior is null) unplacedRemote.Add(r);
+            else placedRemote.Add(r with { PhysicalBounds = prior.PhysicalBounds });
+        }
+
+        result.AddRange(placedRemote);
+        return unplacedRemote.Count > 0 ? AppendToRight(result, unplacedRemote) : result;
     }
 
     /// <summary>

@@ -59,12 +59,21 @@ public static class LayoutStore
         DefaultIgnoreCondition = JsonIgnoreCondition.Never,
     };
 
+    /// <summary>Canonical per-user location of the global-plane layout.</summary>
+    public static string DefaultPath { get; } = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Snapfield", "layout.json");
+
+    /// <summary>Raised after every successful <see cref="Save"/> — lets a running
+    /// session re-route against the newly calibrated plane immediately.</summary>
+    public static event Action? Saved;
+
     public static void Save(string path, DesktopLayout layout)
     {
         var dir = Path.GetDirectoryName(path);
         if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
         var states = layout.Monitors.Select(MonitorState.From).ToList();
         File.WriteAllText(path, JsonSerializer.Serialize(states, Options));
+        Saved?.Invoke();
     }
 
     /// <summary>Loads a saved layout, or null if the file is missing/unreadable.</summary>
@@ -81,21 +90,28 @@ public static class LayoutStore
     }
 
     /// <summary>
-    /// Merges freshly-detected monitors with a saved layout: keeps each detected
-    /// monitor's current pixel bounds + EDID size, but restores the saved physical
-    /// PLACEMENT (position) for monitors the user previously calibrated. New
-    /// monitors keep their provisional seed position.
+    /// Merges freshly-detected LOCAL monitors with a saved layout: keeps each
+    /// detected monitor's current pixel bounds + EDID size, restores the saved
+    /// physical PLACEMENT for monitors the user previously calibrated, and keeps
+    /// every saved monitor that belongs to OTHER machines (remote peers live on
+    /// the same global plane but are never "detected" locally).
     /// </summary>
     public static DesktopLayout Merge(IEnumerable<MonitorInfo> detected, DesktopLayout? saved)
     {
-        if (saved is null) return new DesktopLayout(detected);
-        var merged = detected.Select(d =>
+        var local = detected.ToList();
+        if (saved is null) return new DesktopLayout(local);
+
+        var merged = local.Select(d =>
         {
             var prior = saved.Find(d.Key);
             if (prior is null) return d;
             // Restore saved placement (and any user-corrected physical size).
             return d with { PhysicalBounds = prior.PhysicalBounds };
-        });
+        }).ToList();
+
+        var localMachines = local.Select(m => m.MachineId).ToHashSet();
+        merged.AddRange(saved.Monitors.Where(m => !localMachines.Contains(m.MachineId)));
+
         return new DesktopLayout(merged);
     }
 }

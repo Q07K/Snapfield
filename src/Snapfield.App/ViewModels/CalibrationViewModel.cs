@@ -28,6 +28,29 @@ public sealed class CalibrationViewModel : ObservableObject
         AutoArrangeCommand = new RelayCommand(AutoArrange);
         SaveCommand = new RelayCommand(Save);
         Load();
+
+        // A network session persists the peer's monitors into the layout file on
+        // connect — refresh the canvas when new monitors appear on the plane.
+        LayoutStore.Saved += OnStoreSaved;
+    }
+
+    private void OnStoreSaved()
+    {
+        System.Windows.Application.Current?.Dispatcher.BeginInvoke(() =>
+        {
+            var saved = LayoutStore.Load(AppPaths.LayoutFile);
+            if (saved is null) return;
+
+            // Only reload when the SET of monitors changed (e.g. a remote peer
+            // appeared) — never clobber in-progress drag edits for a plain save.
+            var fileKeys = saved.Monitors.Select(m => m.Key).ToHashSet();
+            var vmKeys = Monitors.Select(m => $"{m.MachineId}/{m.DeviceId}").ToHashSet();
+            if (fileKeys.SetEquals(vmKeys)) return;
+
+            var detected = new MonitorEnumerator().Enumerate();
+            Populate(LayoutStore.Merge(detected, saved));
+            StatusText = "Remote monitors joined the plane — drag them into place and Save.";
+        });
     }
 
     // ── Transform state ──────────────────────────────────────────────────────

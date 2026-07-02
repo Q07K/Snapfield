@@ -46,6 +46,9 @@
                     <TextBlock Text="이 PC의 IP (제어할 기기에서 입력)" Foreground="#9AB" FontSize="11"/>
                     <TextBlock Text="{Binding LocalIps, Mode=OneWay}" Foreground="#FFD75E" FontSize="20"
                                FontWeight="Bold" Margin="0,4,0,0" TextWrapping="Wrap"/>
+                    <TextBlock Text="연결 코드 (제어할 기기에서 함께 입력)" Foreground="#9AB" FontSize="11" Margin="0,10,0,0"/>
+                    <TextBlock Text="{Binding ReceiverPin, Mode=OneWay}" Foreground="#7EE787" FontSize="24"
+                               FontWeight="Bold" Margin="0,2,0,0"/>
                 </StackPanel>
             </Border>
 
@@ -82,6 +85,10 @@
                 <TextBlock Text=":" Foreground="#AAB" VerticalAlignment="Center" Margin="6,0"/>
                 <TextBox Text="{Binding Port}" Width="70" VerticalContentAlignment="Center"/>
             </StackPanel>
+
+            <TextBlock Text="연결 코드 (제어당할 PC 화면의 초록 숫자)" Foreground="#9AB" Margin="0,10,0,4"/>
+            <TextBox Text="{Binding ControllerPin, UpdateSourceTrigger=PropertyChanged}" Width="120"
+                     FontSize="15" HorizontalAlignment="Left" VerticalContentAlignment="Center"/>
 
             <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
                 <Button Content="Connect — 연결" Command="{Binding ConnectCommand}" Padding="14,6" FontWeight="Bold"/>

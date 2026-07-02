@@ -12,6 +12,12 @@ public sealed record AppSettings
 
     /// <summary>Re-start the last session automatically when the app launches.</summary>
     public bool RestoreOnLaunch { get; init; } = true;
+
+    /// <summary>Pairing code this machine shows when acting as receiver (generated once).</summary>
+    public string ReceiverPin { get; init; } = "";
+
+    /// <summary>Pairing code last used to connect to a receiver.</summary>
+    public string ControllerPin { get; init; } = "";
 }
 
 public static class SettingsStore

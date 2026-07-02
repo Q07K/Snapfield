@@ -45,6 +45,17 @@ public sealed class NetworkSession : IDisposable
     private long _rxCount;
     private double _sensitivity = 1.0;
 
+    // Pairing + clipboard state
+    private bool _authRejected;
+    private ClipboardMonitor? _clipboard;
+    private string _lastAppliedClipboard = "";
+
+    /// <summary>Pin this machine requires from controllers (receiver role). Empty = accept anyone.</summary>
+    public string ReceiverPin { get; init; } = "";
+
+    /// <summary>Pin sent when connecting to a receiver (controller role).</summary>
+    public string ControllerPin { get; init; } = "";
+
     public event Action<string>? Status;
     public event Action<EngineStatus>? EngineStatus;
     public event Action<int>? ControllerReady;             // remote monitor count (controller)
@@ -122,8 +133,17 @@ public sealed class NetworkSession : IDisposable
         // mouse AND keyboard input would otherwise leave this machine locked.
         _engine?.Dispose();
         _engine = null;
+        _clipboard?.Dispose();
+        _clipboard = null;
         try { _link?.Dispose(); } catch { }
         _link = null;
+
+        if (_authRejected)
+        {
+            // Wrong pairing pin: retrying would just spam the receiver.
+            Status?.Invoke("연결 코드가 틀렸습니다 — 코드를 확인하고 다시 Connect 하세요.");
+            return;
+        }
 
         var delay = Role == PeerRole.Receiver ? RelistenDelayMs : ReconnectDelayMs;
         Status?.Invoke($"Disconnected: {reason} — retrying in {delay / 1000.0:0.#}s …");
@@ -152,9 +172,18 @@ public sealed class NetworkSession : IDisposable
     private void OnConnected(PeerLink link)
     {
         _reconnectAttempt = 0;
-        var monitors = _localMonitors.Select(MonitorState.From).ToArray();
-        link.Send(NetMessage.Hello(_localMachineId, monitors));
-        Status?.Invoke("Connected. Exchanging layouts …");
+        if (Role == PeerRole.Controller)
+        {
+            // The controller opens with Hello + pin; the receiver answers with its
+            // own Hello only after the pin checks out.
+            var monitors = _localMonitors.Select(MonitorState.From).ToArray();
+            link.Send(NetMessage.Hello(_localMachineId, monitors, ControllerPin));
+            Status?.Invoke("Connected — 연결 코드 확인 중 …");
+        }
+        else
+        {
+            Status?.Invoke("Controller connected — waiting for its hello …");
+        }
     }
 
     private void OnMessage(PeerLink link, NetMessage msg)
@@ -166,10 +195,37 @@ public sealed class NetworkSession : IDisposable
                 var remoteMonitors = (msg.Monitors ?? Array.Empty<MonitorState>())
                     .Select(s => s.ToMonitorInfo()).ToList();
                 if (Role == PeerRole.Controller)
+                {
                     StartController(link, remoteMonitors);
+                    StartClipboardSync(link);
+                }
                 else
+                {
+                    if (ReceiverPin.Length > 0 && msg.Pin != ReceiverPin)
+                    {
+                        Status?.Invoke($"'{RemoteMachineId}'의 접속을 차단했습니다 (연결 코드 불일치).");
+                        link.Send(NetMessage.AuthFailed());
+                        link.Dispose(); // OnLinkDown re-listens for the next attempt
+                        return;
+                    }
+                    var mine = _localMonitors.Select(MonitorState.From).ToArray();
+                    link.Send(NetMessage.Hello(_localMachineId, mine));
+                    StartClipboardSync(link);
                     Status?.Invoke($"Connected to controller '{RemoteMachineId}' " +
                                    $"(it advertised {remoteMonitors.Count} monitor(s)). Ready to be controlled.");
+                }
+                break;
+
+            case MsgType.AuthFail:
+                _authRejected = true; // stop the reconnect loop; the receiver will drop us
+                break;
+
+            case MsgType.Clipboard:
+                if (msg.Text is { Length: > 0 } incoming)
+                {
+                    _lastAppliedClipboard = incoming;
+                    ClipboardIO.TrySetText(incoming);
+                }
                 break;
 
             // Receiver side: reproduce the controller's input locally.
@@ -217,6 +273,22 @@ public sealed class NetworkSession : IDisposable
     }
 
     /// <summary>
+    /// Mirrors local clipboard text to the peer. The peer records what it applied,
+    /// so its own monitor skips the echo and the pair can't ping-pong.
+    /// </summary>
+    private void StartClipboardSync(PeerLink link)
+    {
+        _clipboard?.Dispose();
+        _clipboard = new ClipboardMonitor();
+        _clipboard.TextChanged += text =>
+        {
+            if (text == _lastAppliedClipboard) return; // our own application of the peer's copy
+            link.Send(NetMessage.ClipboardText(text));
+        };
+        _clipboard.Start();
+    }
+
+    /// <summary>
     /// Saves the combined plane while preserving calibrated monitors of machines
     /// that are not part of this session (a third PC calibrated earlier must not
     /// be dropped by a two-machine connection).
@@ -238,6 +310,7 @@ public sealed class NetworkSession : IDisposable
         _disposed = true;
         _linkGen++; // invalidate any pending reconnect
         LayoutStore.Saved -= OnLayoutSaved;
+        _clipboard?.Dispose();
         _engine?.Dispose();
         _link?.Dispose();
     }

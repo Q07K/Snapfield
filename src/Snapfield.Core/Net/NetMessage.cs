@@ -14,6 +14,8 @@ public enum MsgType
     ControlEnter, // control just entered the receiver
     ControlLeave, // control just left the receiver
     Key,          // Vk, Scan, Down, Extended — keyboard transition
+    Clipboard,    // Text — clipboard content changed on the sender
+    AuthFail,     // receiver rejected the controller's pairing pin
 }
 
 /// <summary>
@@ -35,11 +37,16 @@ public sealed record NetMessage
     public int Vk { get; init; }
     public int Scan { get; init; }
     public bool Extended { get; init; }
+    public string? Text { get; init; }
+    public string? Pin { get; init; }
 
     private static readonly JsonSerializerOptions Json = new();
 
-    public static NetMessage Hello(string machineId, MonitorState[] monitors) =>
-        new() { Type = MsgType.Hello, MachineId = machineId, Monitors = monitors };
+    public static NetMessage Hello(string machineId, MonitorState[] monitors, string? pin = null) =>
+        new() { Type = MsgType.Hello, MachineId = machineId, Monitors = monitors, Pin = pin };
+
+    public static NetMessage ClipboardText(string text) => new() { Type = MsgType.Clipboard, Text = text };
+    public static NetMessage AuthFailed() => new() { Type = MsgType.AuthFail };
 
     public static NetMessage Cursor(int x, int y) => new() { Type = MsgType.CursorMove, X = x, Y = y };
     public static NetMessage MouseBtn(int button, bool down) => new() { Type = MsgType.MouseButton, Button = button, Down = down };

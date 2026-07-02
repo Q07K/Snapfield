@@ -40,11 +40,28 @@ public sealed class NetworkViewModel : ObservableObject
         ChooseControllerCommand = new RelayCommand(() => Mode = NetMode.Controller);
         BackCommand = new RelayCommand(() => { Stop(); Mode = NetMode.Choose; }, () => true);
         ListenCommand = new RelayCommand(Listen, () => !IsActive);
-        ConnectCommand = new RelayCommand(Connect, () => !IsActive && !string.IsNullOrWhiteSpace(RemoteHost));
+        ConnectCommand = new RelayCommand(Connect, () => !IsActive && !string.IsNullOrWhiteSpace(RemoteHost) && !string.IsNullOrWhiteSpace(ControllerPin));
         StopCommand = new RelayCommand(Stop, () => IsActive);
         MachineName = _machineId;
         LocalIps = GetLocalIps();
+
+        // Pairing pins: the receiver pin is generated once and shown next to the
+        // IP; the controller pin is whatever the user last typed.
+        var s = SettingsStore.Load();
+        if (string.IsNullOrEmpty(s.ReceiverPin))
+        {
+            s = s with { ReceiverPin = Random.Shared.Next(100000, 999999).ToString() };
+            SettingsStore.Save(s);
+        }
+        ReceiverPin = s.ReceiverPin;
+        _controllerPin = s.ControllerPin;
     }
+
+    /// <summary>Code a controller must present to control this PC.</summary>
+    public string ReceiverPin { get; }
+
+    private string _controllerPin = "";
+    public string ControllerPin { get => _controllerPin; set => SetField(ref _controllerPin, value); }
 
     public string MachineName { get; }
 
@@ -118,7 +135,13 @@ public sealed class NetworkViewModel : ObservableObject
     private void Connect()
     {
         StartSession(s => s.Connect(RemoteHost.Trim(), Port));
-        SettingsStore.Save(SettingsStore.Load() with { LastRole = "Controller", LastHost = RemoteHost.Trim(), LastPort = Port });
+        SettingsStore.Save(SettingsStore.Load() with
+        {
+            LastRole = "Controller",
+            LastHost = RemoteHost.Trim(),
+            LastPort = Port,
+            ControllerPin = ControllerPin.Trim(),
+        });
     }
 
     /// <summary>Re-starts the last session (called at app launch, before any window interaction).</summary>
@@ -144,7 +167,12 @@ public sealed class NetworkViewModel : ObservableObject
     private void StartSession(Action<NetworkSession> begin)
     {
         var monitors = new MonitorEnumerator().Enumerate();
-        _session = new NetworkSession(_machineId, monitors) { Sensitivity = Sensitivity };
+        _session = new NetworkSession(_machineId, monitors)
+        {
+            Sensitivity = Sensitivity,
+            ReceiverPin = ReceiverPin,
+            ControllerPin = ControllerPin.Trim(),
+        };
         _session.Status += OnStatus;
         _session.EngineStatus += OnEngineStatus;
         _session.ControllerReady += OnControllerReady;

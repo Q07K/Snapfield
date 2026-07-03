@@ -67,6 +67,9 @@
                 <Style TargetType="ContentPresenter">
                     <Setter Property="Canvas.Left" Value="{Binding CanvasLeft}"/>
                     <Setter Property="Canvas.Top" Value="{Binding CanvasTop}"/>
+                    <!-- Lower-on-the-desk devices paint on top, so a tall monitor's
+                         stand never sits over a laptop placed below it. -->
+                    <Setter Property="Panel.ZIndex" Value="{Binding ZOrder}"/>
                 </Style>
             </ItemsControl.ItemContainerStyle>
 
@@ -78,6 +81,7 @@
                           MouseLeftButtonUp="Monitor_MouseLeftButtonUp">
                         <Grid.ContextMenu>
                             <ContextMenu>
+                                <MenuItem Header="노트북 ↔ 모니터 전환" Click="ToggleKind_Click"/>
                                 <MenuItem Header="실제 크기 보정 (인치)…" Click="ResizeMonitor_Click"/>
                                 <MenuItem Header="평면에서 제거 (원격 모니터만)" Click="RemoveMonitor_Click"/>
                             </ContextMenu>

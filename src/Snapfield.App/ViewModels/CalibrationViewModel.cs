@@ -210,6 +210,15 @@ public sealed class CalibrationViewModel : ObservableObject
         StatusText = $"'{m.DisplayName}' 크기를 {diagonalInches:0.#}인치({w:0}×{h:0}mm)로 보정했습니다.";
     }
 
+    /// <summary>Flips a display between laptop and monitor when auto-detection got
+    /// it wrong (or a remote arrived from a build without the flag).</summary>
+    public void ToggleKind(MonitorViewModel m)
+    {
+        m.IsLaptop = !m.IsLaptop;
+        Save();
+        StatusText = $"'{m.DisplayName}'을(를) {m.KindLabel}(으)로 변경했습니다.";
+    }
+
     /// <summary>Removes a REMOTE monitor from the plane (a stale peer). Local
     /// monitors are physically attached and would only re-appear on re-detect.</summary>
     public void RemoveMonitor(MonitorViewModel m)

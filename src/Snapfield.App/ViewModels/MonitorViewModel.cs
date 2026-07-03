@@ -24,7 +24,7 @@ public sealed class MonitorViewModel : ObservableObject
         PixelLeft = m.PixelBounds.Left;
         PixelTop = m.PixelBounds.Top;
         DpiScale = m.DpiScale;
-        IsLaptop = m.IsInternal;
+        _isLaptop = m.IsInternal;
         _xMm = m.PhysicalBounds.XMm;
         _yMm = m.PhysicalBounds.YMm;
         WidthMm = m.PhysicalBounds.WidthMm;
@@ -38,8 +38,15 @@ public sealed class MonitorViewModel : ObservableObject
     /// <summary>True when this monitor belongs to another machine on the plane.</summary>
     public bool IsRemote => MachineId != Environment.MachineName;
 
-    /// <summary>Built-in laptop panel vs standalone monitor — drives the silhouette.</summary>
-    public bool IsLaptop { get; }
+    /// <summary>Built-in laptop panel vs standalone monitor — drives the silhouette.
+    /// Auto-detected, but the user can override it (EDID/QueryDisplayConfig can be
+    /// wrong, or a remote came from an older build without the flag).</summary>
+    private bool _isLaptop;
+    public bool IsLaptop
+    {
+        get => _isLaptop;
+        set { if (SetField(ref _isLaptop, value)) { OnPropertyChanged(nameof(IsMonitor)); OnPropertyChanged(nameof(KindLabel)); } }
+    }
     public bool IsMonitor => !IsLaptop;
     public string KindLabel => IsLaptop ? "노트북" : "모니터";
     public int PixelWidth { get; }
@@ -54,7 +61,11 @@ public sealed class MonitorViewModel : ObservableObject
     public double XMm { get => _xMm; private set { if (SetField(ref _xMm, value)) OnPropertyChanged(nameof(CanvasLeft)); } }
 
     private double _yMm;
-    public double YMm { get => _yMm; private set { if (SetField(ref _yMm, value)) OnPropertyChanged(nameof(CanvasTop)); } }
+    public double YMm { get => _yMm; private set { if (SetField(ref _yMm, value)) { OnPropertyChanged(nameof(CanvasTop)); OnPropertyChanged(nameof(ZOrder)); } } }
+
+    /// <summary>Painter order: lower-on-the-desk devices draw on top, so a monitor's
+    /// stand never covers a laptop sitting below it.</summary>
+    public int ZOrder => (int)Math.Round(_yMm);
 
     private bool _isSelected;
     public bool IsSelected { get => _isSelected; set => SetField(ref _isSelected, value); }

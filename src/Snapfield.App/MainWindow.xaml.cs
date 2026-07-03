@@ -90,6 +90,12 @@ public partial class MainWindow : Window
         _dragging.DragTo(_dragStartXMm + dxMm, _dragStartYMm + dyMm);
     }
 
+    private void ToggleKind_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is ViewModels.MonitorViewModel m)
+            Vm.ToggleKind(m);
+    }
+
     private void RemoveMonitor_Click(object sender, RoutedEventArgs e)
     {
         if ((sender as FrameworkElement)?.DataContext is ViewModels.MonitorViewModel m)

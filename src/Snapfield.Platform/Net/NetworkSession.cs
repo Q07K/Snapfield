@@ -45,8 +45,7 @@ public sealed class NetworkSession : IDisposable
     private long _rxCount;
     private double _sensitivity = 1.0;
 
-    // Pairing + clipboard state
-    private bool _authRejected;
+    // Clipboard state
     private ClipboardMonitor? _clipboard;
     private string _lastAppliedClipboard = "";
 
@@ -100,7 +99,7 @@ public sealed class NetworkSession : IDisposable
         _host = host;
         _port = port;
         Status?.Invoke($"Connecting to {host}:{port} …");
-        StartLink(l => l.Connect(host, port));
+        StartLink(l => l.Connect(host, port, ControllerPin));
     }
 
     public void Listen(int port)
@@ -108,7 +107,7 @@ public sealed class NetworkSession : IDisposable
         Role = PeerRole.Receiver;
         _port = port;
         Status?.Invoke($"Listening on port {port} — waiting for a controller to connect …");
-        StartLink(l => l.Listen(port));
+        StartLink(l => l.Listen(port, ReceiverPin));
     }
 
     // ── Link lifecycle ───────────────────────────────────────────────────────
@@ -139,10 +138,10 @@ public sealed class NetworkSession : IDisposable
         try { _link?.Dispose(); } catch { }
         _link = null;
 
-        if (_authRejected)
+        if (reason.StartsWith("AUTH:", StringComparison.Ordinal))
         {
-            // Wrong pairing pin: retrying would just spam the receiver.
-            Status?.Invoke("연결 코드가 틀렸습니다 — 코드를 확인하고 다시 Connect 하세요.");
+            // Wrong pairing code — the encrypted handshake rejected it. Don't spam retries.
+            Status?.Invoke(reason["AUTH:".Length..].Trim() + " 코드를 확인하고 다시 연결하세요.");
             return;
         }
 
@@ -157,12 +156,12 @@ public sealed class NetworkSession : IDisposable
             if (Role == PeerRole.Controller)
             {
                 Status?.Invoke($"Reconnecting to {_host}:{_port} (attempt {_reconnectAttempt}) …");
-                StartLink(l => l.Connect(_host, _port));
+                StartLink(l => l.Connect(_host, _port, ControllerPin));
             }
             else
             {
                 Status?.Invoke($"Listening again on port {_port} (attempt {_reconnectAttempt}) …");
-                StartLink(l => l.Listen(_port));
+                StartLink(l => l.Listen(_port, ReceiverPin));
             }
         }) { IsBackground = true, Name = "Snapfield.Reconnect" };
         t.Start();
@@ -175,15 +174,15 @@ public sealed class NetworkSession : IDisposable
         _reconnectAttempt = 0;
         if (Role == PeerRole.Controller)
         {
-            // The controller opens with Hello + pin; the receiver answers with its
-            // own Hello only after the pin checks out.
+            // Channel is already encrypted and PIN-authenticated by the handshake;
+            // Hello now just carries the monitor layout.
             var monitors = _localMonitors.Select(MonitorState.From).ToArray();
-            link.Send(NetMessage.Hello(_localMachineId, monitors, ControllerPin));
-            Status?.Invoke("Connected — 연결 코드 확인 중 …");
+            link.Send(NetMessage.Hello(_localMachineId, monitors));
+            Status?.Invoke("Connected — 레이아웃 교환 중 …");
         }
         else
         {
-            Status?.Invoke("Controller connected — waiting for its hello …");
+            Status?.Invoke("암호화 연결됨 — 컨트롤러의 hello 대기 중 …");
         }
     }
 
@@ -202,23 +201,11 @@ public sealed class NetworkSession : IDisposable
                 }
                 else
                 {
-                    if (ReceiverPin.Length > 0 && msg.Pin != ReceiverPin)
-                    {
-                        Status?.Invoke($"'{RemoteMachineId}'의 접속을 차단했습니다 (연결 코드 불일치).");
-                        link.Send(NetMessage.AuthFailed());
-                        link.Dispose(); // OnLinkDown re-listens for the next attempt
-                        return;
-                    }
                     var mine = _localMonitors.Select(MonitorState.From).ToArray();
                     link.Send(NetMessage.Hello(_localMachineId, mine));
                     StartClipboardSync(link);
-                    Status?.Invoke($"Connected to controller '{RemoteMachineId}' " +
-                                   $"(it advertised {remoteMonitors.Count} monitor(s)). Ready to be controlled.");
+                    Status?.Invoke($"'{RemoteMachineId}'에 연결됨 (모니터 {remoteMonitors.Count}대). 제어 대기 중.");
                 }
-                break;
-
-            case MsgType.AuthFail:
-                _authRejected = true; // stop the reconnect loop; the receiver will drop us
                 break;
 
             case MsgType.Clipboard:

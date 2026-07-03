@@ -1,5 +1,3 @@
-using System.Buffers.Binary;
-using System.Text;
 using System.Text.Json;
 using Snapfield.Core.Persistence;
 
@@ -60,15 +58,8 @@ public sealed record NetMessage
     public static NetMessage Enter() => new() { Type = MsgType.ControlEnter };
     public static NetMessage Leave() => new() { Type = MsgType.ControlLeave };
 
-    /// <summary>Serialise to a length-prefixed frame ready to write to a stream.</summary>
-    public byte[] ToFrame()
-    {
-        var body = JsonSerializer.SerializeToUtf8Bytes(this, Json);
-        var frame = new byte[4 + body.Length];
-        BinaryPrimitives.WriteInt32LittleEndian(frame, body.Length);
-        body.CopyTo(frame, 4);
-        return frame;
-    }
+    /// <summary>Serialise the message body to UTF-8 JSON (no length prefix).</summary>
+    public byte[] ToJson() => JsonSerializer.SerializeToUtf8Bytes(this, Json);
 
     public static NetMessage? FromBody(ReadOnlySpan<byte> body) =>
         JsonSerializer.Deserialize<NetMessage>(body, Json);

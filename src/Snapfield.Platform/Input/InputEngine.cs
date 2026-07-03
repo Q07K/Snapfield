@@ -108,11 +108,44 @@ public sealed class InputEngine : IDisposable
 
     // Runs on the keyboard-hook thread — keep it fast. While captured, keys go
     // to the remote machine and are swallowed locally; when local, pass through.
+    private int _ctrlTaps;
+    private int _ctrlTapTick;
+
     private bool OnKeyEvent(KeyHookEvent e)
     {
         if (e.InjectedByUs || !_captured) return false;
+
+        // Panic release: tap Ctrl 3× quickly to yank control back to this PC,
+        // e.g. if the remote hangs. Any other key resets the count.
+        if (IsPanicTap(e)) { ForceReleaseToLocal(); return true; }
+
         RemoteKey?.Invoke(e.Vk, e.Scan, !e.Up, e.Extended);
         return true;
+    }
+
+    private bool IsPanicTap(KeyHookEvent e)
+    {
+        var isCtrl = e.Vk is 0x11 or 0xA2 or 0xA3; // VK_CONTROL / L / R
+        if (!isCtrl) { _ctrlTaps = 0; return false; }
+        if (!e.Up) return false;                    // count on release, not auto-repeat
+        var now = Environment.TickCount;
+        if (now - _ctrlTapTick > 700) _ctrlTaps = 0;
+        _ctrlTapTick = now;
+        if (++_ctrlTaps < 3) return false;
+        _ctrlTaps = 0;
+        return true;
+    }
+
+    /// <summary>Immediately returns control to this PC (panic hotkey / safety).</summary>
+    private void ForceReleaseToLocal()
+    {
+        if (!_captured) return;
+        _captured = false;
+        CursorHider.Show();
+        CursorInjector.WarpTo(_center.X, _center.Y);
+        _router.SeatLocal(_center.X, _center.Y);
+        ControlReturnedLocal?.Invoke();
+        RaiseStatus(force: true);
     }
 
     // Runs on the hook thread — keep it fast.

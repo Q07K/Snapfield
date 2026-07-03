@@ -32,7 +32,18 @@ public sealed class CalibrationViewModel : ObservableObject
         // A network session persists the peer's monitors into the layout file on
         // connect — refresh the canvas when new monitors appear on the plane.
         LayoutStore.Saved += OnStoreSaved;
+
+        // Auto re-detect when a monitor is plugged/unplugged — no manual button.
+        Microsoft.Win32.SystemEvents.DisplaySettingsChanged += OnDisplaysChanged;
     }
+
+    private void OnDisplaysChanged(object? sender, EventArgs e) =>
+        System.Windows.Application.Current?.Dispatcher.BeginInvoke(ReDetect);
+
+    public void ShutDown() => Microsoft.Win32.SystemEvents.DisplaySettingsChanged -= OnDisplaysChanged;
+
+    /// <summary>Saves silently (no status message) — used for auto-save after a drag.</summary>
+    public void AutoSave() => LayoutStore.Save(AppPaths.LayoutFile, new DesktopLayout(Monitors.Select(m => m.ToMonitorInfo())));
 
     private void OnStoreSaved()
     {

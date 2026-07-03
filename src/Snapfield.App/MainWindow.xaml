@@ -3,17 +3,13 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        xmlns:local="clr-namespace:Snapfield.App"
         xmlns:vm="clr-namespace:Snapfield.App.ViewModels"
         mc:Ignorable="d"
-        Title="Snapfield — Calibration" Height="640" Width="1000"
-        Background="#0A0A11">
-    <Window.DataContext>
-        <vm:CalibrationViewModel/>
-    </Window.DataContext>
-
+        Title="Snapfield" Height="600" Width="760" Background="#0A0A11">
     <Window.Resources>
-        <!-- Aurora palette: near-black ground, screens glow in their role color -->
+        <BooleanToVisibilityConverter x:Key="B2V"/>
+
+        <!-- calibration canvas palette (Aurora) -->
         <SolidColorBrush x:Key="bezelLocal"  Color="#141522"/>
         <SolidColorBrush x:Key="bezelRemote" Color="#141522"/>
         <SolidColorBrush x:Key="glowLocal"   Color="#5B87EE"/>
@@ -26,169 +22,339 @@
         <SolidColorBrush x:Key="creamDim"    Color="#B7BBCE"/>
         <SolidColorBrush x:Key="creamFaint"  Color="#828699"/>
         <LinearGradientBrush x:Key="screen" StartPoint="0,0" EndPoint="0,1">
-            <GradientStop Color="#171826" Offset="0"/>
-            <GradientStop Color="#0D0E17" Offset="1"/>
+            <GradientStop Color="#171826" Offset="0"/><GradientStop Color="#0D0E17" Offset="1"/>
         </LinearGradientBrush>
         <LinearGradientBrush x:Key="deskWood" StartPoint="0,0" EndPoint="0,1">
-            <GradientStop Color="#14141F" Offset="0"/>
-            <GradientStop Color="#0A0A11" Offset="1"/>
+            <GradientStop Color="#14141F" Offset="0"/><GradientStop Color="#0A0A11" Offset="1"/>
         </LinearGradientBrush>
+
+        <!-- top tab buttons (segmented) -->
+        <Style x:Key="TabConnect" TargetType="Button" BasedOn="{StaticResource SegmentButton}">
+            <Setter Property="Padding" Value="18,9"/>
+            <Setter Property="Tag"><Setter.Value><CornerRadius>8,0,0,8</CornerRadius></Setter.Value></Setter>
+            <Style.Triggers><DataTrigger Binding="{Binding IsConnect}" Value="True">
+                <Setter Property="Background" Value="{StaticResource Accent}"/><Setter Property="Foreground" Value="White"/></DataTrigger></Style.Triggers>
+        </Style>
+        <Style x:Key="TabCalibrate" TargetType="Button" BasedOn="{StaticResource SegmentButton}">
+            <Setter Property="Padding" Value="18,9"/>
+            <Style.Triggers><DataTrigger Binding="{Binding IsCalibrate}" Value="True">
+                <Setter Property="Background" Value="{StaticResource Accent}"/><Setter Property="Foreground" Value="White"/></DataTrigger></Style.Triggers>
+        </Style>
+        <Style x:Key="TabSettings" TargetType="Button" BasedOn="{StaticResource SegmentButton}">
+            <Setter Property="Padding" Value="18,9"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Tag"><Setter.Value><CornerRadius>0,8,8,0</CornerRadius></Setter.Value></Setter>
+            <Style.Triggers><DataTrigger Binding="{Binding IsSettings}" Value="True">
+                <Setter Property="Background" Value="{StaticResource Accent}"/><Setter Property="Foreground" Value="White"/></DataTrigger></Style.Triggers>
+        </Style>
+
+        <!-- role toggle (inside Connect tab) -->
+        <Style x:Key="SegLeft" TargetType="Button" BasedOn="{StaticResource SegmentButton}">
+            <Setter Property="Tag"><Setter.Value><CornerRadius>8,0,0,8</CornerRadius></Setter.Value></Setter>
+            <Setter Property="Padding" Value="20,9"/>
+            <Style.Triggers><DataTrigger Binding="{Binding IsControllerSelected}" Value="True">
+                <Setter Property="Background" Value="{StaticResource Accent}"/><Setter Property="Foreground" Value="White"/></DataTrigger></Style.Triggers>
+        </Style>
+        <Style x:Key="SegRight" TargetType="Button" BasedOn="{StaticResource SegmentButton}">
+            <Setter Property="Tag"><Setter.Value><CornerRadius>0,8,8,0</CornerRadius></Setter.Value></Setter>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="20,9"/>
+            <Style.Triggers><DataTrigger Binding="{Binding IsReceiverSelected}" Value="True">
+                <Setter Property="Background" Value="{StaticResource Accent}"/><Setter Property="Foreground" Value="White"/></DataTrigger></Style.Triggers>
+        </Style>
+
+        <Style x:Key="RecentRow" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="HorizontalAlignment" Value="Stretch"/>
+            <Setter Property="Padding" Value="12,10"/>
+            <Setter Property="Margin" Value="0,0,0,6"/>
+        </Style>
     </Window.Resources>
 
-    <DockPanel>
-        <!-- Toolbar -->
-        <Border DockPanel.Dock="Top" Background="#13131C" Padding="10,8">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <!-- ═══ Header + tabs ═══ -->
+        <Border Grid.Row="0" Background="#13131C" Padding="14,10">
             <StackPanel Orientation="Horizontal">
                 <TextBlock Text="Snapfield" Foreground="{StaticResource cream}" FontSize="16" FontWeight="Bold"
-                           VerticalAlignment="Center" Margin="0,0,16,0"/>
-
-                <!-- Segmented control: fused buttons, hairline dividers, rounded ends -->
-                <Border Background="#1B1C26" BorderBrush="{StaticResource Hairline}" BorderThickness="1"
-                        CornerRadius="9" SnapsToDevicePixels="True">
+                           VerticalAlignment="Center" Margin="0,0,18,0"/>
+                <Border Background="#1B1C26" BorderBrush="{StaticResource Hairline}" BorderThickness="1" CornerRadius="9">
                     <StackPanel Orientation="Horizontal">
-                        <Button Content="Re-detect" Command="{Binding ReDetectCommand}" Style="{StaticResource SegmentButton}">
-                            <Button.Tag><CornerRadius>8,0,0,8</CornerRadius></Button.Tag>
-                        </Button>
-                        <Button Content="Auto-arrange" Command="{Binding AutoArrangeCommand}" Style="{StaticResource SegmentButton}"/>
-                        <Button Content="Save layout" Command="{Binding SaveCommand}" Style="{StaticResource SegmentButton}"/>
-                        <Button Content="Input Engine…" Click="OpenEngine_Click" Style="{StaticResource SegmentButton}"/>
-                        <Button Content="Network…" Click="OpenNetwork_Click" Style="{StaticResource SegmentButton}" BorderThickness="0">
-                            <Button.Tag><CornerRadius>0,8,8,0</CornerRadius></Button.Tag>
-                        </Button>
+                        <Button Content="연결" Command="{Binding SelectConnectCommand}" Style="{StaticResource TabConnect}"/>
+                        <Button Content="모니터 배치" Command="{Binding SelectCalibrateCommand}" Style="{StaticResource TabCalibrate}"/>
+                        <Button Content="설정" Command="{Binding SelectSettingsCommand}" Style="{StaticResource TabSettings}"/>
                     </StackPanel>
                 </Border>
-
-                <TextBlock Text="실제 책상 배치대로 끌어다 놓으세요. 가장자리는 자동으로 붙습니다."
-                           Foreground="#6E7288" VerticalAlignment="Center" Margin="20,0,0,0"/>
             </StackPanel>
         </Border>
 
-        <!-- Status bar -->
-        <Border DockPanel.Dock="Bottom" Background="#13131C" Padding="10,5">
-            <TextBlock Text="{Binding StatusText}" Foreground="{StaticResource creamDim}"/>
-        </Border>
+        <Grid Grid.Row="1">
 
-        <!-- Calibration surface (the desk) -->
-        <ItemsControl x:Name="Surface" ItemsSource="{Binding Monitors}"
-                      SizeChanged="Surface_SizeChanged" ClipToBounds="True">
-            <ItemsControl.ItemsPanel>
-                <ItemsPanelTemplate>
-                    <Canvas Background="{StaticResource deskWood}"/>
-                </ItemsPanelTemplate>
-            </ItemsControl.ItemsPanel>
-
-            <ItemsControl.ItemContainerStyle>
-                <Style TargetType="ContentPresenter">
-                    <Setter Property="Canvas.Left" Value="{Binding CanvasLeft}"/>
-                    <Setter Property="Canvas.Top" Value="{Binding CanvasTop}"/>
-                    <!-- Lower-on-the-desk devices paint on top, so a tall monitor's
-                         stand never sits over a laptop placed below it. -->
-                    <Setter Property="Panel.ZIndex" Value="{Binding ZOrder}"/>
-                </Style>
-            </ItemsControl.ItemContainerStyle>
-
-            <ItemsControl.ItemTemplate>
-                <DataTemplate DataType="{x:Type vm:MonitorViewModel}">
-                    <Grid Width="{Binding CanvasWidth}" Height="{Binding CanvasHeight}" Cursor="SizeAll"
-                          MouseLeftButtonDown="Monitor_MouseLeftButtonDown"
-                          MouseMove="Monitor_MouseMove"
-                          MouseLeftButtonUp="Monitor_MouseLeftButtonUp">
-                        <Grid.ContextMenu>
-                            <ContextMenu>
-                                <MenuItem Header="노트북 ↔ 모니터 전환" Click="ToggleKind_Click"/>
-                                <MenuItem Header="실제 크기 보정 (인치)…" Click="ResizeMonitor_Click"/>
-                                <MenuItem Header="평면에서 제거 (원격 모니터만)" Click="RemoveMonitor_Click"/>
-                            </ContextMenu>
-                        </Grid.ContextMenu>
-
-                        <!-- Monitor stand: neck + foot, sits just below the screen -->
-                        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Bottom"
-                                    Margin="0,0,0,-16" Panel.ZIndex="0">
-                            <StackPanel.Style>
-                                <Style TargetType="StackPanel">
-                                    <Setter Property="Visibility" Value="Visible"/>
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding IsLaptop}" Value="True">
-                                            <Setter Property="Visibility" Value="Collapsed"/>
-                                        </DataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </StackPanel.Style>
-                            <Rectangle Width="9" Height="10" Fill="{StaticResource standWarm}"/>
-                            <Rectangle Width="48" Height="6" RadiusX="3" RadiusY="3" Fill="{StaticResource standWarm}"/>
-                        </StackPanel>
-
-                        <!-- Laptop deck: a ledge slightly wider than the screen -->
-                        <Border VerticalAlignment="Bottom" Height="11" Margin="-8,0,-8,-11"
-                                CornerRadius="0,0,7,7" Panel.ZIndex="0">
-                            <Border.Style>
-                                <Style TargetType="Border">
-                                    <Setter Property="Background" Value="{StaticResource deckLocal}"/>
-                                    <Setter Property="Visibility" Value="Collapsed"/>
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding IsLaptop}" Value="True">
-                                            <Setter Property="Visibility" Value="Visible"/>
-                                        </DataTrigger>
-                                        <DataTrigger Binding="{Binding IsRemote}" Value="True">
-                                            <Setter Property="Background" Value="{StaticResource deckRemote}"/>
-                                        </DataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </Border.Style>
-                            <Rectangle Width="28" Height="3" RadiusX="1.5" RadiusY="1.5"
-                                       Fill="#33000000" VerticalAlignment="Center"/>
+            <!-- ═══════════ TAB · 연결 (network) ═══════════ -->
+            <Grid DataContext="{Binding Network}"
+                  Visibility="{Binding DataContext.IsConnect, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource B2V}}">
+                <Grid Margin="18">
+                    <!-- role select -->
+                    <StackPanel Visibility="{Binding IsChoosePage, Converter={StaticResource B2V}}" VerticalAlignment="Center">
+                        <TextBlock Foreground="#EAECF6" FontSize="15" HorizontalAlignment="Center">
+                            <Run Text="이 PC ("/><Run Text="{Binding MachineName, Mode=OneWay}" FontWeight="Bold"/><Run Text=")의 역할"/>
+                        </TextBlock>
+                        <Border HorizontalAlignment="Center" Margin="0,18,0,16" Background="#1B1C26"
+                                BorderBrush="{StaticResource Hairline}" BorderThickness="1" CornerRadius="9">
+                            <StackPanel Orientation="Horizontal">
+                                <Button Content="조작 기기" Command="{Binding SelectControllerCommand}" Style="{StaticResource SegLeft}"/>
+                                <Button Content="수신 기기" Command="{Binding SelectReceiverCommand}" Style="{StaticResource SegRight}"/>
+                            </StackPanel>
                         </Border>
+                        <TextBlock Text="{Binding RoleDesc}" Foreground="#9A9EAD" TextAlignment="Center"
+                                   TextWrapping="Wrap" MaxWidth="320" FontSize="13" Margin="0,0,0,22"/>
+                        <Button Content="다음" Command="{Binding ProceedCommand}" Style="{StaticResource PrimaryButton}"
+                                Width="150" HorizontalAlignment="Center"/>
+                    </StackPanel>
 
-                        <!-- Screen: warm bezel wrapping a dark panel -->
-                        <Border CornerRadius="8" Padding="4" BorderThickness="1.6">
-                            <Border.Style>
-                                <Style TargetType="Border">
-                                    <Setter Property="Background" Value="{StaticResource bezelLocal}"/>
-                                    <Setter Property="BorderBrush" Value="{StaticResource glowLocal}"/>
-                                    <Setter Property="Effect">
-                                        <Setter.Value>
-                                            <DropShadowEffect Color="#5B87EE" BlurRadius="26" ShadowDepth="0" Opacity="0.6"/>
-                                        </Setter.Value>
-                                    </Setter>
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding IsRemote}" Value="True">
-                                            <Setter Property="BorderBrush" Value="{StaticResource glowRemote}"/>
-                                            <Setter Property="Effect">
-                                                <Setter.Value>
-                                                    <DropShadowEffect Color="#EBA956" BlurRadius="26" ShadowDepth="0" Opacity="0.6"/>
-                                                </Setter.Value>
-                                            </Setter>
-                                        </DataTrigger>
-                                        <DataTrigger Binding="{Binding IsSelected}" Value="True">
-                                            <Setter Property="BorderBrush" Value="{StaticResource selection}"/>
-                                        </DataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </Border.Style>
-
-                            <Border CornerRadius="4" Background="{StaticResource screen}">
-                                <Viewbox Margin="8,7" MaxHeight="104">
-                                    <StackPanel>
-                                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,0,0,1">
-                                            <TextBlock Text="{Binding MachineId}" Foreground="#9DB4E8" FontSize="8.5"/>
-                                            <TextBlock Text=" · " Foreground="#565A6E" FontSize="8.5"/>
-                                            <TextBlock Text="{Binding KindLabel}" Foreground="#8A8FA4" FontSize="8.5"/>
-                                        </StackPanel>
-                                        <TextBlock Text="{Binding DisplayName}" Foreground="{StaticResource cream}"
-                                                   FontWeight="SemiBold" HorizontalAlignment="Center"/>
-                                        <TextBlock Text="{Binding ResolutionText}" Foreground="{StaticResource creamDim}"
-                                                   HorizontalAlignment="Center"/>
-                                        <TextBlock Text="{Binding PhysicalText}" Foreground="{StaticResource creamFaint}"
-                                                   HorizontalAlignment="Center"/>
-                                        <TextBlock Text="{Binding DiagonalText}" Foreground="#6E7286"
-                                                   HorizontalAlignment="Center"/>
-                                    </StackPanel>
-                                </Viewbox>
+                    <!-- controller -->
+                    <StackPanel Visibility="{Binding IsControllerPage, Converter={StaticResource B2V}}">
+                        <StackPanel Orientation="Horizontal">
+                            <Button Content="← 뒤로" Command="{Binding BackCommand}" Padding="10,5"/>
+                            <TextBlock Text="조작 기기" Foreground="#EAECF6" FontSize="15" FontWeight="Bold" VerticalAlignment="Center" Margin="12,0,0,0"/>
+                        </StackPanel>
+                        <StackPanel Visibility="{Binding IsIdle, Converter={StaticResource B2V}}">
+                            <TextBlock Text="최근 연결" Foreground="#9A9EAD" FontSize="11.5" Margin="0,16,0,7"
+                                       Visibility="{Binding HasRecent, Converter={StaticResource B2V}}"/>
+                            <ItemsControl ItemsSource="{Binding RecentConnections}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Button Style="{StaticResource RecentRow}"
+                                                Command="{Binding DataContext.ConnectRecentCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                CommandParameter="{Binding}">
+                                            <DockPanel LastChildFill="False">
+                                                <StackPanel DockPanel.Dock="Left">
+                                                    <TextBlock Text="{Binding Name}" Foreground="#EAECF6" FontWeight="SemiBold" FontSize="13"/>
+                                                    <TextBlock Foreground="#7E8296" FontSize="11" Margin="0,3,0,0">
+                                                        <Run Text="{Binding Host, Mode=OneWay}"/><Run Text=":"/><Run Text="{Binding Port, Mode=OneWay}"/>
+                                                    </TextBlock>
+                                                </StackPanel>
+                                                <TextBlock DockPanel.Dock="Right" Text="연결 ›" Foreground="#5B87EE" FontWeight="SemiBold" FontSize="12.5" VerticalAlignment="Center"/>
+                                            </DockPanel>
+                                        </Button>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <TextBlock Text="아직 연결한 기기가 없어요. 새 기기를 추가하세요." Foreground="#7E8296" FontSize="12"
+                                       Margin="0,18,0,14" TextAlignment="Center" Visibility="{Binding NoRecent, Converter={StaticResource B2V}}"/>
+                            <Button Content="＋ 새 기기 연결" Command="{Binding ShowNewFormCommand}" Style="{StaticResource PrimaryButton}"
+                                    HorizontalAlignment="Left" Margin="0,10,0,0"/>
+                        </StackPanel>
+                        <StackPanel Visibility="{Binding IsActive, Converter={StaticResource B2V}}" Margin="0,16,0,0">
+                            <Border CornerRadius="11" Padding="14" Background="{Binding SideBrush}">
+                                <StackPanel>
+                                    <TextBlock Text="{Binding Side}" Foreground="White" FontSize="16" FontWeight="Bold" HorizontalAlignment="Center"/>
+                                    <TextBlock Text="{Binding Detail}" Foreground="#EEE" FontSize="11.5" HorizontalAlignment="Center" Margin="0,5,0,0" TextWrapping="Wrap" TextAlignment="Center"/>
+                                </StackPanel>
                             </Border>
+                            <TextBlock Text="커서를 화면 오른쪽 끝으로 밀어 상대 PC로 넘어가세요." Foreground="#7E8296" FontSize="11.5" TextAlignment="Center" Margin="0,12,0,0"/>
+                            <Button Content="연결 끊기" Command="{Binding StopCommand}" HorizontalAlignment="Center" Margin="0,14,0,0"/>
+                        </StackPanel>
+                        <TextBlock Text="{Binding Status}" Foreground="#7E8296" TextWrapping="Wrap" FontSize="11" Margin="0,12,0,0"/>
+                    </StackPanel>
+
+                    <!-- receiver -->
+                    <StackPanel Visibility="{Binding IsReceiverPage, Converter={StaticResource B2V}}">
+                        <StackPanel Orientation="Horizontal">
+                            <Button Content="← 뒤로" Command="{Binding BackCommand}" Padding="10,5"/>
+                            <TextBlock Text="수신 기기" Foreground="#EAECF6" FontSize="15" FontWeight="Bold" VerticalAlignment="Center" Margin="12,0,0,0"/>
+                        </StackPanel>
+                        <StackPanel Visibility="{Binding IsIdle, Converter={StaticResource B2V}}" Margin="0,16,0,0">
+                            <Border Background="#161620" CornerRadius="12" Padding="16">
+                                <StackPanel>
+                                    <TextBlock Text="이 PC의 IP (조작 기기에서 입력)" Foreground="#9A9EAD" FontSize="11.5"/>
+                                    <TextBlock Text="{Binding LocalIps, Mode=OneWay}" Foreground="#EBB257" FontSize="20" FontWeight="Bold" Margin="0,4,0,0" TextWrapping="Wrap"/>
+                                    <TextBlock Text="연결 코드" Foreground="#9A9EAD" FontSize="11.5" Margin="0,12,0,0"/>
+                                    <TextBlock Text="{Binding ReceiverPin, Mode=OneWay}" Foreground="#5FCF8A" FontSize="30" FontWeight="Bold" FontFamily="Consolas" Margin="0,2,0,0"/>
+                                </StackPanel>
+                            </Border>
+                            <Button Content="대기 시작" Command="{Binding ListenCommand}" Style="{StaticResource PrimaryButton}" HorizontalAlignment="Left" Width="130" Margin="0,14,0,0"/>
+                        </StackPanel>
+                        <StackPanel Visibility="{Binding IsWaiting, Converter={StaticResource B2V}}" Margin="0,20,0,0" HorizontalAlignment="Center">
+                            <Grid Width="90" Height="90" HorizontalAlignment="Center">
+                                <Ellipse Width="90" Height="90" Fill="#5FCF8A" Opacity="0.28">
+                                    <Ellipse.RenderTransform><ScaleTransform x:Name="pulseT" CenterX="45" CenterY="45" ScaleX="0.6" ScaleY="0.6"/></Ellipse.RenderTransform>
+                                    <Ellipse.Triggers>
+                                        <EventTrigger RoutedEvent="Ellipse.Loaded">
+                                            <BeginStoryboard><Storyboard RepeatBehavior="Forever">
+                                                <DoubleAnimation Storyboard.TargetName="pulseT" Storyboard.TargetProperty="ScaleX" From="0.55" To="1" Duration="0:0:1.4" AutoReverse="True"/>
+                                                <DoubleAnimation Storyboard.TargetName="pulseT" Storyboard.TargetProperty="ScaleY" From="0.55" To="1" Duration="0:0:1.4" AutoReverse="True"/>
+                                            </Storyboard></BeginStoryboard>
+                                        </EventTrigger>
+                                    </Ellipse.Triggers>
+                                </Ellipse>
+                                <Ellipse Width="14" Height="14" Fill="#5FCF8A" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Grid>
+                            <TextBlock Text="연결 대기 중…" Foreground="#EAECF6" FontSize="15" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,14,0,0"/>
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,10,0,0">
+                                <TextBlock Text="{Binding LocalIps, Mode=OneWay}" Foreground="#EBB257" FontWeight="Bold" FontFamily="Consolas" VerticalAlignment="Center"/>
+                                <TextBlock Text="{Binding ReceiverPin, Mode=OneWay}" Foreground="#5FCF8A" FontWeight="Bold" FontFamily="Consolas" FontSize="16" Margin="14,0,0,0" VerticalAlignment="Center"/>
+                            </StackPanel>
+                            <Button Content="중지" Command="{Binding StopCommand}" HorizontalAlignment="Center" Margin="0,16,0,0"/>
+                        </StackPanel>
+                        <StackPanel Visibility="{Binding IsBeingControlled, Converter={StaticResource B2V}}" Margin="0,20,0,0">
+                            <Border CornerRadius="12" Padding="16" Background="{Binding SideBrush}">
+                                <StackPanel>
+                                    <TextBlock Text="{Binding Side}" Foreground="White" FontSize="17" FontWeight="Bold" HorizontalAlignment="Center"/>
+                                    <TextBlock Text="{Binding Detail}" Foreground="#EEE" FontSize="11.5" HorizontalAlignment="Center" Margin="0,5,0,0" TextWrapping="Wrap" TextAlignment="Center"/>
+                                </StackPanel>
+                            </Border>
+                            <Button Content="중지" Command="{Binding StopCommand}" HorizontalAlignment="Center" Margin="0,14,0,0"/>
+                        </StackPanel>
+                        <TextBlock Text="{Binding Status}" Foreground="#7E8296" TextWrapping="Wrap" FontSize="11" Margin="0,14,0,0"/>
+                    </StackPanel>
+
+                    <!-- new-connection bottom sheet -->
+                    <Grid Margin="-18" Panel.ZIndex="10" Visibility="{Binding ShowNewForm, Converter={StaticResource B2V}}">
+                        <Button Command="{Binding CloseSheetCommand}" Background="#99000000" Cursor="Arrow" Focusable="False">
+                            <Button.Template><ControlTemplate TargetType="Button"><Border Background="{TemplateBinding Background}"/></ControlTemplate></Button.Template>
+                        </Button>
+                        <Border VerticalAlignment="Bottom" Background="#181A26" BorderBrush="{StaticResource Hairline}"
+                                BorderThickness="1,1,0,0" CornerRadius="18,18,0,0" Padding="20,14,20,20">
+                            <StackPanel>
+                                <Border Width="38" Height="4" CornerRadius="2" Background="#3A3D50" Margin="0,0,0,14"/>
+                                <TextBlock Text="새 기기 연결" Foreground="#EAECF6" FontSize="15" FontWeight="Bold" Margin="0,0,0,14"/>
+                                <TextBlock Text="상대(수신) PC의 IP" Foreground="#9A9EAD" FontSize="11.5" Margin="0,0,0,5"/>
+                                <TextBox Text="{Binding RemoteHost, UpdateSourceTrigger=PropertyChanged}" FontSize="14"/>
+                                <TextBlock Text="연결 코드 (수신 PC 화면의 초록 숫자)" Foreground="#9A9EAD" FontSize="11.5" Margin="0,12,0,5"/>
+                                <TextBox Text="{Binding ControllerPin, UpdateSourceTrigger=PropertyChanged}" Width="150" HorizontalAlignment="Left" FontSize="14"/>
+                                <Button Content="고급 · 포트 설정 ▾" Command="{Binding ToggleAdvancedCommand}" HorizontalAlignment="Left"
+                                        Margin="0,12,0,0" Padding="0,4" Background="Transparent" BorderThickness="0" Foreground="#7E8296" FontSize="11.5"/>
+                                <StackPanel Orientation="Horizontal" Margin="0,6,0,0" Visibility="{Binding ShowAdvanced, Converter={StaticResource B2V}}">
+                                    <TextBlock Text="포트" Foreground="#9A9EAD" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                    <TextBox Text="{Binding Port}" Width="90"/>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0">
+                                    <Button Content="취소" Command="{Binding CloseSheetCommand}" Margin="0,0,8,0"/>
+                                    <Button Content="연결" Command="{Binding ConnectCommand}" Style="{StaticResource PrimaryButton}" Width="110"/>
+                                </StackPanel>
+                            </StackPanel>
                         </Border>
                     </Grid>
-                </DataTemplate>
-            </ItemsControl.ItemTemplate>
-        </ItemsControl>
-    </DockPanel>
+                </Grid>
+            </Grid>
+
+            <!-- ═══════════ TAB · 모니터 배치 (calibration) ═══════════ -->
+            <DockPanel DataContext="{Binding Calibration}"
+                       Visibility="{Binding DataContext.IsCalibrate, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource B2V}}">
+                <Border DockPanel.Dock="Bottom" Background="#13131C" Padding="12,7">
+                    <DockPanel LastChildFill="False">
+                        <Button DockPanel.Dock="Left" Content="자동 정렬로 초기화" Command="{Binding AutoArrangeCommand}"/>
+                        <TextBlock DockPanel.Dock="Right" Text="{Binding StatusText}" Foreground="{StaticResource creamDim}"
+                                   VerticalAlignment="Center" FontSize="11.5"/>
+                    </DockPanel>
+                </Border>
+                <ItemsControl x:Name="Surface" ItemsSource="{Binding Monitors}" SizeChanged="Surface_SizeChanged" ClipToBounds="True">
+                    <ItemsControl.ItemsPanel><ItemsPanelTemplate><Canvas Background="{StaticResource deskWood}"/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemContainerStyle>
+                        <Style TargetType="ContentPresenter">
+                            <Setter Property="Canvas.Left" Value="{Binding CanvasLeft}"/>
+                            <Setter Property="Canvas.Top" Value="{Binding CanvasTop}"/>
+                            <Setter Property="Panel.ZIndex" Value="{Binding ZOrder}"/>
+                        </Style>
+                    </ItemsControl.ItemContainerStyle>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate DataType="{x:Type vm:MonitorViewModel}">
+                            <Grid Width="{Binding CanvasWidth}" Height="{Binding CanvasHeight}" Cursor="SizeAll"
+                                  MouseLeftButtonDown="Monitor_MouseLeftButtonDown" MouseMove="Monitor_MouseMove" MouseLeftButtonUp="Monitor_MouseLeftButtonUp">
+                                <Grid.ContextMenu>
+                                    <ContextMenu>
+                                        <MenuItem Header="노트북 ↔ 모니터 전환" Click="ToggleKind_Click"/>
+                                        <MenuItem Header="실제 크기 보정 (인치)…" Click="ResizeMonitor_Click"/>
+                                        <MenuItem Header="평면에서 제거 (원격 모니터만)" Click="RemoveMonitor_Click"/>
+                                    </ContextMenu>
+                                </Grid.ContextMenu>
+                                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,-16" Panel.ZIndex="0">
+                                    <StackPanel.Style><Style TargetType="StackPanel">
+                                        <Setter Property="Visibility" Value="Visible"/>
+                                        <Style.Triggers><DataTrigger Binding="{Binding IsLaptop}" Value="True"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger></Style.Triggers>
+                                    </Style></StackPanel.Style>
+                                    <Rectangle Width="9" Height="10" Fill="{StaticResource standWarm}"/>
+                                    <Rectangle Width="48" Height="6" RadiusX="3" RadiusY="3" Fill="{StaticResource standWarm}"/>
+                                </StackPanel>
+                                <Border VerticalAlignment="Bottom" Height="11" Margin="-8,0,-8,-11" CornerRadius="0,0,7,7" Panel.ZIndex="0">
+                                    <Border.Style><Style TargetType="Border">
+                                        <Setter Property="Background" Value="{StaticResource deckLocal}"/>
+                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsLaptop}" Value="True"><Setter Property="Visibility" Value="Visible"/></DataTrigger>
+                                            <DataTrigger Binding="{Binding IsRemote}" Value="True"><Setter Property="Background" Value="{StaticResource deckRemote}"/></DataTrigger>
+                                        </Style.Triggers>
+                                    </Style></Border.Style>
+                                    <Rectangle Width="28" Height="3" RadiusX="1.5" RadiusY="1.5" Fill="#33000000" VerticalAlignment="Center"/>
+                                </Border>
+                                <Border CornerRadius="8" Padding="4" BorderThickness="1.6">
+                                    <Border.Style><Style TargetType="Border">
+                                        <Setter Property="Background" Value="{StaticResource bezelLocal}"/>
+                                        <Setter Property="BorderBrush" Value="{StaticResource glowLocal}"/>
+                                        <Setter Property="Effect"><Setter.Value><DropShadowEffect Color="#5B87EE" BlurRadius="26" ShadowDepth="0" Opacity="0.6"/></Setter.Value></Setter>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsRemote}" Value="True">
+                                                <Setter Property="BorderBrush" Value="{StaticResource glowRemote}"/>
+                                                <Setter Property="Effect"><Setter.Value><DropShadowEffect Color="#EBA956" BlurRadius="26" ShadowDepth="0" Opacity="0.6"/></Setter.Value></Setter>
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding IsSelected}" Value="True"><Setter Property="BorderBrush" Value="{StaticResource selection}"/></DataTrigger>
+                                        </Style.Triggers>
+                                    </Style></Border.Style>
+                                    <Border CornerRadius="4" Background="{StaticResource screen}">
+                                        <Viewbox Margin="8,7" MaxHeight="104">
+                                            <StackPanel>
+                                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,0,0,1">
+                                                    <TextBlock Text="{Binding MachineId}" Foreground="#9DB4E8" FontSize="8.5"/>
+                                                    <TextBlock Text=" · " Foreground="#565A6E" FontSize="8.5"/>
+                                                    <TextBlock Text="{Binding KindLabel}" Foreground="#8A8FA4" FontSize="8.5"/>
+                                                </StackPanel>
+                                                <TextBlock Text="{Binding DisplayName}" Foreground="{StaticResource cream}" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+                                                <TextBlock Text="{Binding ResolutionText}" Foreground="{StaticResource creamDim}" HorizontalAlignment="Center"/>
+                                                <TextBlock Text="{Binding PhysicalText}" Foreground="{StaticResource creamFaint}" HorizontalAlignment="Center"/>
+                                                <TextBlock Text="{Binding DiagonalText}" Foreground="#6E7286" HorizontalAlignment="Center"/>
+                                            </StackPanel>
+                                        </Viewbox>
+                                    </Border>
+                                </Border>
+                            </Grid>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </DockPanel>
+
+            <!-- ═══════════ TAB · 설정 (settings) ═══════════ -->
+            <ScrollViewer DataContext="{Binding Settings}" VerticalScrollBarVisibility="Auto"
+                          Visibility="{Binding DataContext.IsSettings, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource B2V}}">
+                <StackPanel Margin="24,20" MaxWidth="460" HorizontalAlignment="Left">
+                    <TextBlock Text="시작" Foreground="#9A9EAD" FontSize="11" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                    <CheckBox Content="로그인 시 자동 실행" IsChecked="{Binding AutoStart}" Foreground="{StaticResource cream}" Margin="0,0,0,10"/>
+                    <CheckBox Content="실행 시 마지막 연결 자동 복원" IsChecked="{Binding RestoreOnLaunch}" Foreground="{StaticResource cream}"/>
+
+                    <TextBlock Text="입력" Foreground="#9A9EAD" FontSize="11" FontWeight="SemiBold" Margin="0,22,0,8"/>
+                    <TextBlock Text="상대 PC에서의 커서 속도" Foreground="{StaticResource creamDim}" FontSize="12.5" Margin="0,0,0,4"/>
+                    <Slider Minimum="0.25" Maximum="3.0" Value="{Binding Sensitivity}" TickFrequency="0.25" IsSnapToTickEnabled="True" Width="260" HorizontalAlignment="Left"/>
+
+                    <TextBlock Text="이 PC 정보" Foreground="#9A9EAD" FontSize="11" FontWeight="SemiBold" Margin="0,22,0,8"/>
+                    <Border Background="#161620" CornerRadius="10" Padding="14" HorizontalAlignment="Left">
+                        <StackPanel>
+                            <TextBlock Foreground="#9A9EAD" FontSize="11.5">
+                                <Run Text="기기 이름: "/><Run Text="{Binding MachineName, Mode=OneWay}" Foreground="#EAECF6" FontWeight="SemiBold"/>
+                            </TextBlock>
+                            <TextBlock Text="연결 코드 (상대가 나를 조작할 때 입력)" Foreground="#9A9EAD" FontSize="11.5" Margin="0,10,0,2"/>
+                            <TextBlock Text="{Binding ReceiverPin, Mode=OneWay}" Foreground="#5FCF8A" FontSize="24" FontWeight="Bold" FontFamily="Consolas"/>
+                        </StackPanel>
+                    </Border>
+
+                    <TextBlock Text="네트워크" Foreground="#9A9EAD" FontSize="11" FontWeight="SemiBold" Margin="0,22,0,8"/>
+                    <Button Content="방화벽 규칙 등록" Command="{Binding RegisterFirewallCommand}" HorizontalAlignment="Left"/>
+                    <TextBlock Text="{Binding FirewallStatus}" Foreground="#7E8296" FontSize="11" Margin="0,7,0,0" TextWrapping="Wrap"/>
+                </StackPanel>
+            </ScrollViewer>
+        </Grid>
+    </Grid>
 </Window>

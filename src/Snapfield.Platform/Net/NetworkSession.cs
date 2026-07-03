@@ -47,6 +47,7 @@ public sealed class NetworkSession : IDisposable
 
     // Clipboard state
     private ClipboardMonitor? _clipboard;
+    private Beacon? _beacon;
     private string _lastAppliedClipboard = "";
 
     /// <summary>Pin this machine requires from controllers (receiver role). Empty = accept anyone.</summary>
@@ -108,6 +109,10 @@ public sealed class NetworkSession : IDisposable
         _port = port;
         Status?.Invoke($"Listening on port {port} — waiting for a controller to connect …");
         StartLink(l => l.Listen(port, ReceiverPin));
+
+        // Advertise on the LAN so controllers can find us without typing an IP.
+        _beacon = new Beacon();
+        _beacon.Start(_localMachineId, port);
     }
 
     // ── Link lifecycle ───────────────────────────────────────────────────────
@@ -325,6 +330,7 @@ public sealed class NetworkSession : IDisposable
         _disposed = true;
         _linkGen++; // invalidate any pending reconnect
         LayoutStore.Saved -= OnLayoutSaved;
+        _beacon?.Dispose();
         _clipboard?.Dispose();
         _engine?.Dispose();
         _link?.Dispose();

@@ -38,6 +38,7 @@ public sealed class NetworkViewModel : ObservableObject
         ListenCommand = new RelayCommand(Listen, () => !IsActive);
         ConnectCommand = new RelayCommand(Connect, () => !IsActive && !string.IsNullOrWhiteSpace(RemoteHost) && !string.IsNullOrWhiteSpace(ControllerPin));
         ConnectRecentCommand = new RelayCommand<RecentConnection>(ConnectRecent, r => r is not null && !IsActive);
+        PickDiscoveredCommand = new RelayCommand<DiscoveredItem>(PickDiscovered, d => d is not null && !IsActive);
         ShowNewFormCommand = new RelayCommand(() => { ShowAdvanced = false; ShowNewForm = true; });
         CloseSheetCommand = new RelayCommand(() => ShowNewForm = false);
         ToggleAdvancedCommand = new RelayCommand(() => ShowAdvanced = !ShowAdvanced);
@@ -64,6 +65,7 @@ public sealed class NetworkViewModel : ObservableObject
     public ICommand ListenCommand { get; }
     public ICommand ConnectCommand { get; }
     public ICommand ConnectRecentCommand { get; }
+    public ICommand PickDiscoveredCommand { get; }
     public ICommand ShowNewFormCommand { get; }
     public ICommand CloseSheetCommand { get; }
     public ICommand ToggleAdvancedCommand { get; }
@@ -75,6 +77,20 @@ public sealed class NetworkViewModel : ObservableObject
     public ObservableCollection<RecentConnection> RecentConnections { get; } = new();
     public bool HasRecent => RecentConnections.Count > 0;
     public bool NoRecent => RecentConnections.Count == 0;
+
+    /// <summary>A receiver found on the LAN via its beacon.</summary>
+    public sealed class DiscoveredItem
+    {
+        public string Name { get; set; } = "";
+        public string Host { get; set; } = "";
+        public int Port { get; set; }
+        public long LastSeen { get; set; }
+    }
+
+    public ObservableCollection<DiscoveredItem> Discovered { get; } = new();
+    public bool HasDiscovered => Discovered.Count > 0;
+
+    private DiscoveryListener? _discovery;
 
     // ── Choose page (B3 toggle) ───────────────────────────────────────────────
     private bool _isControllerSelected = true;
@@ -99,6 +115,7 @@ public sealed class NetworkViewModel : ObservableObject
             OnPropertyChanged(nameof(IsChoosePage));
             OnPropertyChanged(nameof(IsReceiverPage));
             OnPropertyChanged(nameof(IsControllerPage));
+            if (value == NetMode.Controller) StartDiscovery(); else StopDiscovery();
         }
     }
     public bool IsChoosePage => Mode == NetMode.Choose;
@@ -178,6 +195,7 @@ public sealed class NetworkViewModel : ObservableObject
         var host = RemoteHost.Trim();
         var pin = ControllerPin.Trim();
         ShowNewForm = false; // close the sheet as we connect
+        StopDiscovery();      // no need to keep scanning once connecting
         StartSession(s => s.Connect(host, Port));
         SettingsStore.Save(SettingsStore.Load() with { LastRole = "Controller", LastHost = host, LastPort = Port, ControllerPin = pin });
         Remember(host, Port, pin, host); // name refined once the peer says hello
@@ -191,6 +209,50 @@ public sealed class NetworkViewModel : ObservableObject
         ControllerPin = r.Pin;
         Connect();
     }
+
+    private void PickDiscovered(DiscoveredItem? d)
+    {
+        if (d is null) return;
+        // Fill the address and open the sheet so the user just enters the code.
+        RemoteHost = d.Host;
+        Port = d.Port;
+        ShowAdvanced = false;
+        ShowNewForm = true;
+    }
+
+    // ── LAN discovery (controller side) ───────────────────────────────────────
+    private void StartDiscovery()
+    {
+        if (_discovery is not null) return;
+        _discovery = new DiscoveryListener();
+        _discovery.Found += OnPeerFound;
+        _discovery.Start();
+    }
+
+    private void StopDiscovery()
+    {
+        _discovery?.Dispose();
+        _discovery = null;
+        if (Discovered.Count > 0) { Discovered.Clear(); OnPropertyChanged(nameof(HasDiscovered)); }
+    }
+
+    private void OnPeerFound(DiscoveredPeer peer) =>
+        Application.Current?.Dispatcher.BeginInvoke(() =>
+        {
+            if (peer.Name == _machineId) return; // ignore ourselves
+            var now = Environment.TickCount64;
+
+            // Drop stale entries (no beacon in ~6s).
+            for (var i = Discovered.Count - 1; i >= 0; i--)
+                if (now - Discovered[i].LastSeen > 6000) Discovered.RemoveAt(i);
+
+            var existing = Discovered.FirstOrDefault(x => x.Host == peer.Host);
+            if (existing is null)
+                Discovered.Add(new DiscoveredItem { Name = peer.Name, Host = peer.Host, Port = peer.Port, LastSeen = now });
+            else { existing.Name = peer.Name; existing.Port = peer.Port; existing.LastSeen = now; }
+
+            OnPropertyChanged(nameof(HasDiscovered));
+        });
 
     private void Remember(string host, int port, string pin, string name)
     {
@@ -250,9 +312,11 @@ public sealed class NetworkViewModel : ObservableObject
         Side = "—";
         Detail = "";
         SideBrush = Brushes.Gray;
+        // Back to controller idle → resume scanning for receivers.
+        if (Mode == NetMode.Controller) StartDiscovery();
     }
 
-    public void ShutDown() => Stop();
+    public void ShutDown() { Stop(); StopDiscovery(); }
 
     // ── Session callbacks ─────────────────────────────────────────────────────
     private void OnStatus(string s) =>

@@ -7,38 +7,59 @@
         xmlns:vm="clr-namespace:Snapfield.App.ViewModels"
         mc:Ignorable="d"
         Title="Snapfield — Calibration" Height="640" Width="1000"
-        Background="#1E1E22">
+        Background="#211B15">
     <Window.DataContext>
         <vm:CalibrationViewModel/>
     </Window.DataContext>
 
+    <Window.Resources>
+        <!-- Warm Desk palette -->
+        <SolidColorBrush x:Key="bezelLocal"  Color="#C39A57"/>
+        <SolidColorBrush x:Key="bezelRemote" Color="#BC7738"/>
+        <SolidColorBrush x:Key="deckLocal"   Color="#9C7B44"/>
+        <SolidColorBrush x:Key="deckRemote"  Color="#9A5F2C"/>
+        <SolidColorBrush x:Key="standWarm"   Color="#6E5A41"/>
+        <SolidColorBrush x:Key="selection"   Color="#FFF1D6"/>
+        <SolidColorBrush x:Key="cream"       Color="#F5E7D2"/>
+        <SolidColorBrush x:Key="creamDim"    Color="#D8C3A2"/>
+        <SolidColorBrush x:Key="creamFaint"  Color="#B79C74"/>
+        <LinearGradientBrush x:Key="screen" StartPoint="0,0" EndPoint="0,1">
+            <GradientStop Color="#2E241A" Offset="0"/>
+            <GradientStop Color="#191009" Offset="1"/>
+        </LinearGradientBrush>
+        <LinearGradientBrush x:Key="deskWood" StartPoint="0,0" EndPoint="0,1">
+            <GradientStop Color="#3B3025" Offset="0"/>
+            <GradientStop Color="#2A2119" Offset="1"/>
+        </LinearGradientBrush>
+    </Window.Resources>
+
     <DockPanel>
         <!-- Toolbar -->
-        <Border DockPanel.Dock="Top" Background="#2A2A30" Padding="10,8">
+        <Border DockPanel.Dock="Top" Background="#2C2419" Padding="10,8">
             <StackPanel Orientation="Horizontal">
-                <TextBlock Text="Snapfield" Foreground="#EEE" FontSize="16" FontWeight="Bold"
+                <TextBlock Text="Snapfield" Foreground="{StaticResource cream}" FontSize="16" FontWeight="Bold"
                            VerticalAlignment="Center" Margin="0,0,16,0"/>
                 <Button Content="Re-detect" Command="{Binding ReDetectCommand}" Margin="0,0,8,0" Padding="12,4"/>
                 <Button Content="Auto-arrange" Command="{Binding AutoArrangeCommand}" Margin="0,0,8,0" Padding="12,4"/>
                 <Button Content="Save layout" Command="{Binding SaveCommand}" Padding="12,4" Margin="0,0,8,0"/>
                 <Button Content="Input Engine…" Click="OpenEngine_Click" Padding="12,4" Margin="0,0,8,0"/>
                 <Button Content="Network…" Click="OpenNetwork_Click" Padding="12,4"/>
-                <TextBlock Text="Drag monitors to match their real physical arrangement. Edges snap."
-                           Foreground="#999" VerticalAlignment="Center" Margin="20,0,0,0"/>
+                <TextBlock Text="실제 책상 배치대로 끌어다 놓으세요. 가장자리는 자동으로 붙습니다."
+                           Foreground="#9A876A" VerticalAlignment="Center" Margin="20,0,0,0"/>
             </StackPanel>
         </Border>
 
         <!-- Status bar -->
-        <Border DockPanel.Dock="Bottom" Background="#2A2A30" Padding="10,5">
-            <TextBlock Text="{Binding StatusText}" Foreground="#AAB"/>
+        <Border DockPanel.Dock="Bottom" Background="#2C2419" Padding="10,5">
+            <TextBlock Text="{Binding StatusText}" Foreground="{StaticResource creamDim}"/>
         </Border>
 
-        <!-- Calibration surface -->
+        <!-- Calibration surface (the desk) -->
         <ItemsControl x:Name="Surface" ItemsSource="{Binding Monitors}"
                       SizeChanged="Surface_SizeChanged" ClipToBounds="True">
             <ItemsControl.ItemsPanel>
                 <ItemsPanelTemplate>
-                    <Canvas Background="#17171A"/>
+                    <Canvas Background="{StaticResource deskWood}"/>
                 </ItemsPanelTemplate>
             </ItemsControl.ItemsPanel>
 
@@ -51,49 +72,97 @@
 
             <ItemsControl.ItemTemplate>
                 <DataTemplate DataType="{x:Type vm:MonitorViewModel}">
-                    <Border Width="{Binding CanvasWidth}" Height="{Binding CanvasHeight}"
-                            CornerRadius="6" BorderThickness="2" Cursor="SizeAll"
-                            MouseLeftButtonDown="Monitor_MouseLeftButtonDown"
-                            MouseMove="Monitor_MouseMove"
-                            MouseLeftButtonUp="Monitor_MouseLeftButtonUp">
-                        <Border.ContextMenu>
+                    <Grid Width="{Binding CanvasWidth}" Height="{Binding CanvasHeight}" Cursor="SizeAll"
+                          MouseLeftButtonDown="Monitor_MouseLeftButtonDown"
+                          MouseMove="Monitor_MouseMove"
+                          MouseLeftButtonUp="Monitor_MouseLeftButtonUp">
+                        <Grid.ContextMenu>
                             <ContextMenu>
                                 <MenuItem Header="실제 크기 보정 (인치)…" Click="ResizeMonitor_Click"/>
                                 <MenuItem Header="평면에서 제거 (원격 모니터만)" Click="RemoveMonitor_Click"/>
                             </ContextMenu>
-                        </Border.ContextMenu>
-                        <Border.Style>
-                            <Style TargetType="Border">
-                                <Setter Property="Background" Value="#2E5CB8"/>
-                                <Setter Property="BorderBrush" Value="#4A7BE0"/>
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding IsRemote}" Value="True">
-                                        <Setter Property="Background" Value="#B8722E"/>
-                                        <Setter Property="BorderBrush" Value="#E0A44A"/>
-                                    </DataTrigger>
-                                    <!-- Selection only brightens the border so the
-                                         remote (orange) vs local (blue) fill stays readable. -->
-                                    <DataTrigger Binding="{Binding IsSelected}" Value="True">
-                                        <Setter Property="BorderBrush" Value="#FFFFFF"/>
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </Border.Style>
-                        <Viewbox Margin="6" MaxHeight="90">
-                            <StackPanel>
-                                <TextBlock Text="{Binding MachineId}" Foreground="#FFE9B0" FontSize="9"
-                                           HorizontalAlignment="Center"/>
-                                <TextBlock Text="{Binding DisplayName}" Foreground="White"
-                                           FontWeight="SemiBold" HorizontalAlignment="Center"/>
-                                <TextBlock Text="{Binding ResolutionText}" Foreground="#DDE"
-                                           HorizontalAlignment="Center"/>
-                                <TextBlock Text="{Binding PhysicalText}" Foreground="#BCD"
-                                           HorizontalAlignment="Center"/>
-                                <TextBlock Text="{Binding DiagonalText}" Foreground="#9AB"
-                                           HorizontalAlignment="Center"/>
-                            </StackPanel>
-                        </Viewbox>
-                    </Border>
+                        </Grid.ContextMenu>
+
+                        <!-- Monitor stand: neck + foot, sits just below the screen -->
+                        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Bottom"
+                                    Margin="0,0,0,-16" Panel.ZIndex="0">
+                            <StackPanel.Style>
+                                <Style TargetType="StackPanel">
+                                    <Setter Property="Visibility" Value="Visible"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsLaptop}" Value="True">
+                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </StackPanel.Style>
+                            <Rectangle Width="9" Height="10" Fill="{StaticResource standWarm}"/>
+                            <Rectangle Width="48" Height="6" RadiusX="3" RadiusY="3" Fill="{StaticResource standWarm}"/>
+                        </StackPanel>
+
+                        <!-- Laptop deck: a ledge slightly wider than the screen -->
+                        <Border VerticalAlignment="Bottom" Height="11" Margin="-8,0,-8,-11"
+                                CornerRadius="0,0,7,7" Panel.ZIndex="0">
+                            <Border.Style>
+                                <Style TargetType="Border">
+                                    <Setter Property="Background" Value="{StaticResource deckLocal}"/>
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsLaptop}" Value="True">
+                                            <Setter Property="Visibility" Value="Visible"/>
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding IsRemote}" Value="True">
+                                            <Setter Property="Background" Value="{StaticResource deckRemote}"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Border.Style>
+                            <Rectangle Width="28" Height="3" RadiusX="1.5" RadiusY="1.5"
+                                       Fill="#33000000" VerticalAlignment="Center"/>
+                        </Border>
+
+                        <!-- Screen: warm bezel wrapping a dark panel -->
+                        <Border CornerRadius="8" Padding="4" BorderThickness="2">
+                            <Border.Effect>
+                                <DropShadowEffect Color="#120B05" BlurRadius="16" ShadowDepth="5"
+                                                  Direction="270" Opacity="0.5"/>
+                            </Border.Effect>
+                            <Border.Style>
+                                <Style TargetType="Border">
+                                    <Setter Property="Background" Value="{StaticResource bezelLocal}"/>
+                                    <Setter Property="BorderBrush" Value="Transparent"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsRemote}" Value="True">
+                                            <Setter Property="Background" Value="{StaticResource bezelRemote}"/>
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                                            <Setter Property="BorderBrush" Value="{StaticResource selection}"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Border.Style>
+
+                            <Border CornerRadius="4" Background="{StaticResource screen}">
+                                <Viewbox Margin="8,7" MaxHeight="104">
+                                    <StackPanel>
+                                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,0,0,1">
+                                            <TextBlock Text="{Binding MachineId}" Foreground="#E8C48A" FontSize="8.5"/>
+                                            <TextBlock Text=" · " Foreground="#7A6446" FontSize="8.5"/>
+                                            <TextBlock Text="{Binding KindLabel}" Foreground="#B79C74" FontSize="8.5"/>
+                                        </StackPanel>
+                                        <TextBlock Text="{Binding DisplayName}" Foreground="{StaticResource cream}"
+                                                   FontWeight="SemiBold" HorizontalAlignment="Center"/>
+                                        <TextBlock Text="{Binding ResolutionText}" Foreground="{StaticResource creamDim}"
+                                                   HorizontalAlignment="Center"/>
+                                        <TextBlock Text="{Binding PhysicalText}" Foreground="{StaticResource creamFaint}"
+                                                   HorizontalAlignment="Center"/>
+                                        <TextBlock Text="{Binding DiagonalText}" Foreground="#93794F"
+                                                   HorizontalAlignment="Center"/>
+                                    </StackPanel>
+                                </Viewbox>
+                            </Border>
+                        </Border>
+                    </Grid>
                 </DataTemplate>
             </ItemsControl.ItemTemplate>
         </ItemsControl>

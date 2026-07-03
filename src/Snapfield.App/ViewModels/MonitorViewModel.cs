@@ -24,6 +24,7 @@ public sealed class MonitorViewModel : ObservableObject
         PixelLeft = m.PixelBounds.Left;
         PixelTop = m.PixelBounds.Top;
         DpiScale = m.DpiScale;
+        IsLaptop = m.IsInternal;
         _xMm = m.PhysicalBounds.XMm;
         _yMm = m.PhysicalBounds.YMm;
         WidthMm = m.PhysicalBounds.WidthMm;
@@ -36,6 +37,11 @@ public sealed class MonitorViewModel : ObservableObject
 
     /// <summary>True when this monitor belongs to another machine on the plane.</summary>
     public bool IsRemote => MachineId != Environment.MachineName;
+
+    /// <summary>Built-in laptop panel vs standalone monitor — drives the silhouette.</summary>
+    public bool IsLaptop { get; }
+    public bool IsMonitor => !IsLaptop;
+    public string KindLabel => IsLaptop ? "노트북" : "모니터";
     public int PixelWidth { get; }
     public int PixelHeight { get; }
     public int PixelLeft { get; }
@@ -107,5 +113,6 @@ public sealed class MonitorViewModel : ObservableObject
         PixelBounds = new PixelRect(PixelLeft, PixelTop, PixelWidth, PixelHeight),
         PhysicalBounds = new PhysicalRect(XMm, YMm, WidthMm, HeightMm),
         DpiScale = DpiScale,
+        IsInternal = IsLaptop,
     };
 }

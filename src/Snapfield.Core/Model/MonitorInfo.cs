@@ -42,6 +42,13 @@ public sealed record MonitorInfo
     /// </summary>
     public double DpiScale { get; init; } = 1.0;
 
+    /// <summary>
+    /// True when this is a built-in laptop panel (connection reports INTERNAL),
+    /// false for a standalone monitor. Drives the device silhouette in the UI and
+    /// travels with the monitor in the network handshake.
+    /// </summary>
+    public bool IsInternal { get; init; }
+
     /// <summary>Globally-unique key: machine + device.</summary>
     public string Key => $"{MachineId}/{DeviceId}";
 

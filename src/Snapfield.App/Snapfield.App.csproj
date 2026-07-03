@@ -15,7 +15,7 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <Version>0.8.1</Version>
+    <Version>0.8.2</Version>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <TargetFramework>net8.0-windows</TargetFramework>
     <Nullable>enable</Nullable>

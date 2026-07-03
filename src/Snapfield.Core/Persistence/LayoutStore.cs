@@ -20,6 +20,7 @@ public sealed record MonitorState
     public double PhysicalWidthMm { get; init; }
     public double PhysicalHeightMm { get; init; }
     public double DpiScale { get; init; } = 1.0;
+    public bool IsInternal { get; init; }
 
     public string Key => $"{MachineId}/{DeviceId}";
 
@@ -37,6 +38,7 @@ public sealed record MonitorState
         PhysicalWidthMm = m.PhysicalBounds.WidthMm,
         PhysicalHeightMm = m.PhysicalBounds.HeightMm,
         DpiScale = m.DpiScale,
+        IsInternal = m.IsInternal,
     };
 
     public MonitorInfo ToMonitorInfo() => new()
@@ -47,6 +49,7 @@ public sealed record MonitorState
         PixelBounds = new PixelRect(PixelLeft, PixelTop, PixelWidth, PixelHeight),
         PhysicalBounds = new PhysicalRect(PhysicalXMm, PhysicalYMm, PhysicalWidthMm, PhysicalHeightMm),
         DpiScale = DpiScale,
+        IsInternal = IsInternal,
     };
 }
 

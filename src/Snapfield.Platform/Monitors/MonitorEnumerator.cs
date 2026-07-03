@@ -35,6 +35,7 @@ public sealed class MonitorEnumerator
         var machineId = Environment.MachineName;
         var gdi = EnumerateGdiMonitors();
         var edid = ReadEdidByPnpId();
+        var internalNames = DisplayKind.InternalGdiDeviceNames();
 
         var result = new List<MonitorInfo>();
         foreach (var g in gdi)
@@ -54,6 +55,7 @@ public sealed class MonitorEnumerator
                 PixelBounds = new PixelRect(g.Left, g.Top, g.PixelWidth, g.PixelHeight),
                 // Provisional placement filled in below once all sizes are known.
                 PhysicalBounds = new PhysicalRect(0, 0, widthMm, heightMm),
+                IsInternal = internalNames.Contains(g.DeviceName),
             });
         }
 

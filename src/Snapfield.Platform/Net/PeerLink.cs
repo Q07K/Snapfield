@@ -172,7 +172,7 @@ public sealed class PeerLink : IDisposable
             {
                 if (!ReadExact(stream, lenBuf, 4)) break;
                 var len = BinaryPrimitives.ReadInt32LittleEndian(lenBuf);
-                if (len < 24 || len > 32 * 1024 * 1024) break;
+                if (len < 24 || len > 96 * 1024 * 1024) break;
                 var buf = new byte[len];
                 if (!ReadExact(stream, buf, len)) break;
 

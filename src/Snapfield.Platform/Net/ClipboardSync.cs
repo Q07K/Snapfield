@@ -7,6 +7,7 @@ public static class ClipboardIO
 {
     private const uint CF_UNICODETEXT = 13;
     private const uint CF_DIB = 8;
+    private const uint CF_HDROP = 15;
     private const uint GMEM_MOVEABLE = 0x0002;
 
     public static bool TryGetText(out string text)
@@ -145,6 +146,75 @@ public static class ClipboardIO
         finally { CloseClipboard(); }
     }
 
+    public static bool IsFileListAvailable() => IsClipboardFormatAvailable(CF_HDROP);
+
+    /// <summary>Reads the full paths of files copied in Explorer (CF_HDROP).</summary>
+    public static bool TryGetFilePaths(out string[] paths)
+    {
+        paths = Array.Empty<string>();
+        if (!IsClipboardFormatAvailable(CF_HDROP)) return false;
+        if (!OpenWithRetry()) return false;
+        try
+        {
+            var hDrop = GetClipboardData(CF_HDROP);
+            if (hDrop == IntPtr.Zero) return false;
+            var count = DragQueryFile(hDrop, 0xFFFFFFFF, null, 0);
+            if (count == 0) return false;
+            var list = new List<string>((int)count);
+            var sb = new System.Text.StringBuilder(260);
+            for (uint i = 0; i < count; i++)
+            {
+                sb.Clear(); sb.EnsureCapacity(260);
+                var len = DragQueryFile(hDrop, i, sb, 260);
+                if (len > 0) list.Add(sb.ToString());
+            }
+            paths = list.ToArray();
+            return paths.Length > 0;
+        }
+        finally { CloseClipboard(); }
+    }
+
+    /// <summary>Places a set of local files on the clipboard as CF_HDROP (paste-ready).</summary>
+    public static bool TrySetFiles(string[] paths)
+    {
+        if (paths.Length == 0) return false;
+
+        // DROPFILES header (20 bytes) + double-null-terminated wide path list.
+        var listChars = paths.Sum(p => p.Length + 1) + 1; // each path + null, plus final null
+        var size = 20 + listChars * 2;
+
+        if (!OpenWithRetry()) return false;
+        try
+        {
+            EmptyClipboard();
+            var handle = GlobalAlloc(GMEM_MOVEABLE, (UIntPtr)size);
+            if (handle == IntPtr.Zero) return false;
+            var ptr = GlobalLock(handle);
+            if (ptr == IntPtr.Zero) { GlobalFree(handle); return false; }
+            try
+            {
+                Marshal.WriteInt32(ptr, 0, 20);   // pFiles: offset to the list
+                Marshal.WriteInt32(ptr, 4, 0);    // pt.x
+                Marshal.WriteInt32(ptr, 8, 0);    // pt.y
+                Marshal.WriteInt32(ptr, 12, 0);   // fNC
+                Marshal.WriteInt32(ptr, 16, 1);   // fWide = Unicode
+                var offset = 20;
+                foreach (var p in paths)
+                {
+                    var bytes = System.Text.Encoding.Unicode.GetBytes(p + "\0");
+                    Marshal.Copy(bytes, 0, ptr + offset, bytes.Length);
+                    offset += bytes.Length;
+                }
+                Marshal.WriteInt16(ptr, offset, 0); // final terminator
+            }
+            finally { GlobalUnlock(handle); }
+
+            if (SetClipboardData(CF_HDROP, handle) == IntPtr.Zero) { GlobalFree(handle); return false; }
+            return true;
+        }
+        finally { CloseClipboard(); }
+    }
+
     private static bool OpenWithRetry()
     {
         // The clipboard is a shared, frequently-locked resource — retry briefly.
@@ -167,6 +237,8 @@ public static class ClipboardIO
     [DllImport("kernel32.dll")] private static extern bool GlobalUnlock(IntPtr hMem);
     [DllImport("kernel32.dll")] private static extern IntPtr GlobalFree(IntPtr hMem);
     [DllImport("kernel32.dll")] private static extern UIntPtr GlobalSize(IntPtr hMem);
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    private static extern uint DragQueryFile(IntPtr hDrop, uint iFile, System.Text.StringBuilder? lpszFile, uint cch);
 }
 
 /// <summary>
@@ -184,7 +256,8 @@ public sealed class ClipboardMonitor : IDisposable
     private long _ignoreUpToSeq = -1;
 
     public event Action<string>? TextChanged;
-    public event Action<byte[]>? ImageChanged;      // PNG bytes
+    public event Action<byte[]>? ImageChanged;        // PNG bytes
+    public event Action<string[]>? FilesChanged;      // full local paths
 
     public void Start()
     {
@@ -213,8 +286,13 @@ public sealed class ClipboardMonitor : IDisposable
             var ignoreUpTo = Interlocked.Read(ref _ignoreUpToSeq);
             if (ignoreUpTo >= 0 && now <= (uint)ignoreUpTo) continue; // our own write
 
-            // Text wins when both are present (Office puts text + bitmap together).
-            if (ClipboardIO.TryGetText(out var text))
+            // Files (Explorer copy) are the most specific; then text (Office puts
+            // text + bitmap together, so text beats image); then image.
+            if (ClipboardIO.IsFileListAvailable())
+            {
+                if (ClipboardIO.TryGetFilePaths(out var paths)) FilesChanged?.Invoke(paths);
+            }
+            else if (ClipboardIO.TryGetText(out var text))
             {
                 if (text.Length <= MaxTextLength) TextChanged?.Invoke(text);
             }

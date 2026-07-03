@@ -234,6 +234,10 @@ public sealed class NetworkSession : IDisposable
                 }
                 break;
 
+            case MsgType.ClipboardFiles:
+                if (msg.Files is { Length: > 0 } files) ReceiveFiles(files);
+                break;
+
             // Receiver side: reproduce the controller's input locally.
             case MsgType.CursorMove:
                 CursorInjector.WarpTo(msg.X, msg.Y);
@@ -305,7 +309,57 @@ public sealed class NetworkSession : IDisposable
             link.Send(NetMessage.ClipboardText(text));
         };
         _clipboard.ImageChanged += png => link.Send(NetMessage.ClipboardPng(png));
+        _clipboard.FilesChanged += paths => SendFiles(paths, link);
         _clipboard.Start();
+    }
+
+    private const long FileTotalCap = 32L * 1024 * 1024; // 32 MB across all copied files
+    private static string ReceivedDir => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Snapfield", "Received");
+
+    /// <summary>Reads copied files and sends them to the peer, within a size cap.</summary>
+    private void SendFiles(string[] paths, PeerLink link)
+    {
+        try
+        {
+            long total = 0;
+            var items = new List<SharedFile>();
+            foreach (var p in paths)
+            {
+                if (!File.Exists(p)) continue;         // folders/unsupported — skip
+                var info = new FileInfo(p);
+                total += info.Length;
+                if (total > FileTotalCap) { Status?.Invoke($"파일이 너무 큽니다(>{FileTotalCap / 1024 / 1024}MB) — 전송 생략."); return; }
+                items.Add(new SharedFile { Name = Path.GetFileName(p), Data = Convert.ToBase64String(File.ReadAllBytes(p)) });
+            }
+            if (items.Count > 0) link.Send(NetMessage.ClipboardFilesMsg(items.ToArray()));
+        }
+        catch { /* unreadable file — skip silently */ }
+    }
+
+    /// <summary>Writes received files locally and puts them on the clipboard, paste-ready.</summary>
+    private void ReceiveFiles(SharedFile[] files)
+    {
+        try
+        {
+            Directory.CreateDirectory(ReceivedDir);
+            var written = new List<string>();
+            foreach (var f in files)
+            {
+                var name = Path.GetFileName(f.Name); // strip any path components
+                if (string.IsNullOrWhiteSpace(name)) continue;
+                var dest = Path.Combine(ReceivedDir, name);
+                File.WriteAllBytes(dest, Convert.FromBase64String(f.Data));
+                written.Add(dest);
+            }
+            if (written.Count > 0)
+            {
+                ClipboardIO.TrySetFiles(written.ToArray());
+                _clipboard?.NoteSelfChange();
+                Status?.Invoke($"파일 {written.Count}개 수신 — 붙여넣기(Ctrl+V) 가능.");
+            }
+        }
+        catch { /* write/clipboard failure — ignore */ }
     }
 
     /// <summary>

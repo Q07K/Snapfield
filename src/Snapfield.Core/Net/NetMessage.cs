@@ -16,6 +16,14 @@ public enum MsgType
     AuthFail,       // receiver rejected the controller's pairing pin
     ClipboardImage, // Text carries base64 PNG — clipboard image changed on the sender
     Layout,         // Monitors — the controller's combined global plane, for the receiver to display
+    ClipboardFiles, // Files — copied files (name + base64 bytes) shared via the clipboard
+}
+
+/// <summary>One file shared over the clipboard (name + base64-encoded content).</summary>
+public sealed record SharedFile
+{
+    public string Name { get; init; } = "";
+    public string Data { get; init; } = ""; // base64
 }
 
 /// <summary>
@@ -39,6 +47,7 @@ public sealed record NetMessage
     public bool Extended { get; init; }
     public string? Text { get; init; }
     public string? Pin { get; init; }
+    public SharedFile[]? Files { get; init; }
 
     private static readonly JsonSerializerOptions Json = new();
 
@@ -49,6 +58,7 @@ public sealed record NetMessage
     public static NetMessage ClipboardPng(byte[] png) => new() { Type = MsgType.ClipboardImage, Text = Convert.ToBase64String(png) };
     public static NetMessage AuthFailed() => new() { Type = MsgType.AuthFail };
     public static NetMessage LayoutSync(MonitorState[] monitors) => new() { Type = MsgType.Layout, Monitors = monitors };
+    public static NetMessage ClipboardFilesMsg(SharedFile[] files) => new() { Type = MsgType.ClipboardFiles, Files = files };
 
     public static NetMessage Cursor(int x, int y) => new() { Type = MsgType.CursorMove, X = x, Y = y };
     public static NetMessage MouseBtn(int button, bool down) => new() { Type = MsgType.MouseButton, Button = button, Down = down };

@@ -17,6 +17,7 @@ public enum MsgType
     Clipboard,      // Text — clipboard text changed on the sender
     AuthFail,       // receiver rejected the controller's pairing pin
     ClipboardImage, // Text carries base64 PNG — clipboard image changed on the sender
+    Layout,         // Monitors — the controller's combined global plane, for the receiver to display
 }
 
 /// <summary>
@@ -49,6 +50,7 @@ public sealed record NetMessage
     public static NetMessage ClipboardText(string text) => new() { Type = MsgType.Clipboard, Text = text };
     public static NetMessage ClipboardPng(byte[] png) => new() { Type = MsgType.ClipboardImage, Text = Convert.ToBase64String(png) };
     public static NetMessage AuthFailed() => new() { Type = MsgType.AuthFail };
+    public static NetMessage LayoutSync(MonitorState[] monitors) => new() { Type = MsgType.Layout, Monitors = monitors };
 
     public static NetMessage Cursor(int x, int y) => new() { Type = MsgType.CursorMove, X = x, Y = y };
     public static NetMessage MouseBtn(int button, bool down) => new() { Type = MsgType.MouseButton, Button = button, Down = down };

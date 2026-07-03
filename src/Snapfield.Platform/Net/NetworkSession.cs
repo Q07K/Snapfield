@@ -90,6 +90,7 @@ public sealed class NetworkSession : IDisposable
         var combined = PhysicalLayoutBuilder.Calibrated(
             _localMonitors, _lastRemoteMonitors, LayoutStore.Load(LayoutStore.DefaultPath));
         _engine.UpdateLayout(new DesktopLayout(combined));
+        _link?.Send(NetMessage.LayoutSync(combined.Select(MonitorState.From).ToArray()));
         Status?.Invoke("Calibration applied to the live session.");
     }
 
@@ -251,6 +252,15 @@ public sealed class NetworkSession : IDisposable
             case MsgType.Key: CursorInjector.KeyEvent(msg.Vk, msg.Scan, msg.Down, msg.Extended); break;
             case MsgType.ControlEnter: Status?.Invoke("Controller took over this screen."); break;
             case MsgType.ControlLeave: Status?.Invoke("Controller left this screen."); break;
+
+            // Receiver: mirror the controller's combined plane into our layout file
+            // so the 모니터 배치 tab shows the same global arrangement (LayoutStore.Saved
+            // then refreshes the calibration canvas).
+            case MsgType.Layout:
+                if (Role == PeerRole.Receiver && msg.Monitors is { Length: > 0 })
+                    LayoutStore.Save(LayoutStore.DefaultPath,
+                        new DesktopLayout(msg.Monitors.Select(s => s.ToMonitorInfo())));
+                break;
         }
     }
 
@@ -281,6 +291,10 @@ public sealed class NetworkSession : IDisposable
         RemoteMonitorCount = remoteMonitors.Count;
         ControllerReady?.Invoke(remoteMonitors.Count);
         _engine.Start();
+
+        // Send the combined plane so the receiver's calibration canvas mirrors it.
+        link.Send(NetMessage.LayoutSync(combined.Monitors.Select(MonitorState.From).ToArray()));
+
         Status?.Invoke($"Controlling '{RemoteMachineId}' ({remoteMonitors.Count} remote monitor(s)). " +
                        "Push the cursor off the right edge to cross over.");
     }

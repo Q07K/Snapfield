@@ -7,50 +7,64 @@
         xmlns:vm="clr-namespace:Snapfield.App.ViewModels"
         mc:Ignorable="d"
         Title="Snapfield — Calibration" Height="640" Width="1000"
-        Background="#211B15">
+        Background="#0A0A11">
     <Window.DataContext>
         <vm:CalibrationViewModel/>
     </Window.DataContext>
 
     <Window.Resources>
-        <!-- Warm Desk palette -->
-        <SolidColorBrush x:Key="bezelLocal"  Color="#C39A57"/>
-        <SolidColorBrush x:Key="bezelRemote" Color="#BC7738"/>
-        <SolidColorBrush x:Key="deckLocal"   Color="#9C7B44"/>
-        <SolidColorBrush x:Key="deckRemote"  Color="#9A5F2C"/>
-        <SolidColorBrush x:Key="standWarm"   Color="#6E5A41"/>
-        <SolidColorBrush x:Key="selection"   Color="#FFF1D6"/>
-        <SolidColorBrush x:Key="cream"       Color="#F5E7D2"/>
-        <SolidColorBrush x:Key="creamDim"    Color="#D8C3A2"/>
-        <SolidColorBrush x:Key="creamFaint"  Color="#B79C74"/>
+        <!-- Aurora palette: near-black ground, screens glow in their role color -->
+        <SolidColorBrush x:Key="bezelLocal"  Color="#141522"/>
+        <SolidColorBrush x:Key="bezelRemote" Color="#141522"/>
+        <SolidColorBrush x:Key="glowLocal"   Color="#5B87EE"/>
+        <SolidColorBrush x:Key="glowRemote"  Color="#EBA956"/>
+        <SolidColorBrush x:Key="deckLocal"   Color="#2E3A5C"/>
+        <SolidColorBrush x:Key="deckRemote"  Color="#5A3F24"/>
+        <SolidColorBrush x:Key="standWarm"   Color="#2A2F40"/>
+        <SolidColorBrush x:Key="selection"   Color="#FFFFFF"/>
+        <SolidColorBrush x:Key="cream"       Color="#EAECF6"/>
+        <SolidColorBrush x:Key="creamDim"    Color="#B7BBCE"/>
+        <SolidColorBrush x:Key="creamFaint"  Color="#828699"/>
         <LinearGradientBrush x:Key="screen" StartPoint="0,0" EndPoint="0,1">
-            <GradientStop Color="#2E241A" Offset="0"/>
-            <GradientStop Color="#191009" Offset="1"/>
+            <GradientStop Color="#171826" Offset="0"/>
+            <GradientStop Color="#0D0E17" Offset="1"/>
         </LinearGradientBrush>
         <LinearGradientBrush x:Key="deskWood" StartPoint="0,0" EndPoint="0,1">
-            <GradientStop Color="#3B3025" Offset="0"/>
-            <GradientStop Color="#2A2119" Offset="1"/>
+            <GradientStop Color="#14141F" Offset="0"/>
+            <GradientStop Color="#0A0A11" Offset="1"/>
         </LinearGradientBrush>
     </Window.Resources>
 
     <DockPanel>
         <!-- Toolbar -->
-        <Border DockPanel.Dock="Top" Background="#2C2419" Padding="10,8">
+        <Border DockPanel.Dock="Top" Background="#13131C" Padding="10,8">
             <StackPanel Orientation="Horizontal">
                 <TextBlock Text="Snapfield" Foreground="{StaticResource cream}" FontSize="16" FontWeight="Bold"
                            VerticalAlignment="Center" Margin="0,0,16,0"/>
-                <Button Content="Re-detect" Command="{Binding ReDetectCommand}" Margin="0,0,8,0" Padding="12,4"/>
-                <Button Content="Auto-arrange" Command="{Binding AutoArrangeCommand}" Margin="0,0,8,0" Padding="12,4"/>
-                <Button Content="Save layout" Command="{Binding SaveCommand}" Padding="12,4" Margin="0,0,8,0"/>
-                <Button Content="Input Engine…" Click="OpenEngine_Click" Padding="12,4" Margin="0,0,8,0"/>
-                <Button Content="Network…" Click="OpenNetwork_Click" Padding="12,4"/>
+
+                <!-- Segmented control: fused buttons, hairline dividers, rounded ends -->
+                <Border Background="#1B1C26" BorderBrush="{StaticResource Hairline}" BorderThickness="1"
+                        CornerRadius="9" SnapsToDevicePixels="True">
+                    <StackPanel Orientation="Horizontal">
+                        <Button Content="Re-detect" Command="{Binding ReDetectCommand}" Style="{StaticResource SegmentButton}">
+                            <Button.Tag><CornerRadius>8,0,0,8</CornerRadius></Button.Tag>
+                        </Button>
+                        <Button Content="Auto-arrange" Command="{Binding AutoArrangeCommand}" Style="{StaticResource SegmentButton}"/>
+                        <Button Content="Save layout" Command="{Binding SaveCommand}" Style="{StaticResource SegmentButton}"/>
+                        <Button Content="Input Engine…" Click="OpenEngine_Click" Style="{StaticResource SegmentButton}"/>
+                        <Button Content="Network…" Click="OpenNetwork_Click" Style="{StaticResource SegmentButton}" BorderThickness="0">
+                            <Button.Tag><CornerRadius>0,8,8,0</CornerRadius></Button.Tag>
+                        </Button>
+                    </StackPanel>
+                </Border>
+
                 <TextBlock Text="실제 책상 배치대로 끌어다 놓으세요. 가장자리는 자동으로 붙습니다."
-                           Foreground="#9A876A" VerticalAlignment="Center" Margin="20,0,0,0"/>
+                           Foreground="#6E7288" VerticalAlignment="Center" Margin="20,0,0,0"/>
             </StackPanel>
         </Border>
 
         <!-- Status bar -->
-        <Border DockPanel.Dock="Bottom" Background="#2C2419" Padding="10,5">
+        <Border DockPanel.Dock="Bottom" Background="#13131C" Padding="10,5">
             <TextBlock Text="{Binding StatusText}" Foreground="{StaticResource creamDim}"/>
         </Border>
 
@@ -126,18 +140,24 @@
                         </Border>
 
                         <!-- Screen: warm bezel wrapping a dark panel -->
-                        <Border CornerRadius="8" Padding="4" BorderThickness="2">
-                            <Border.Effect>
-                                <DropShadowEffect Color="#120B05" BlurRadius="16" ShadowDepth="5"
-                                                  Direction="270" Opacity="0.5"/>
-                            </Border.Effect>
+                        <Border CornerRadius="8" Padding="4" BorderThickness="1.6">
                             <Border.Style>
                                 <Style TargetType="Border">
                                     <Setter Property="Background" Value="{StaticResource bezelLocal}"/>
-                                    <Setter Property="BorderBrush" Value="Transparent"/>
+                                    <Setter Property="BorderBrush" Value="{StaticResource glowLocal}"/>
+                                    <Setter Property="Effect">
+                                        <Setter.Value>
+                                            <DropShadowEffect Color="#5B87EE" BlurRadius="26" ShadowDepth="0" Opacity="0.6"/>
+                                        </Setter.Value>
+                                    </Setter>
                                     <Style.Triggers>
                                         <DataTrigger Binding="{Binding IsRemote}" Value="True">
-                                            <Setter Property="Background" Value="{StaticResource bezelRemote}"/>
+                                            <Setter Property="BorderBrush" Value="{StaticResource glowRemote}"/>
+                                            <Setter Property="Effect">
+                                                <Setter.Value>
+                                                    <DropShadowEffect Color="#EBA956" BlurRadius="26" ShadowDepth="0" Opacity="0.6"/>
+                                                </Setter.Value>
+                                            </Setter>
                                         </DataTrigger>
                                         <DataTrigger Binding="{Binding IsSelected}" Value="True">
                                             <Setter Property="BorderBrush" Value="{StaticResource selection}"/>
@@ -150,9 +170,9 @@
                                 <Viewbox Margin="8,7" MaxHeight="104">
                                     <StackPanel>
                                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,0,0,1">
-                                            <TextBlock Text="{Binding MachineId}" Foreground="#E8C48A" FontSize="8.5"/>
-                                            <TextBlock Text=" · " Foreground="#7A6446" FontSize="8.5"/>
-                                            <TextBlock Text="{Binding KindLabel}" Foreground="#B79C74" FontSize="8.5"/>
+                                            <TextBlock Text="{Binding MachineId}" Foreground="#9DB4E8" FontSize="8.5"/>
+                                            <TextBlock Text=" · " Foreground="#565A6E" FontSize="8.5"/>
+                                            <TextBlock Text="{Binding KindLabel}" Foreground="#8A8FA4" FontSize="8.5"/>
                                         </StackPanel>
                                         <TextBlock Text="{Binding DisplayName}" Foreground="{StaticResource cream}"
                                                    FontWeight="SemiBold" HorizontalAlignment="Center"/>
@@ -160,7 +180,7 @@
                                                    HorizontalAlignment="Center"/>
                                         <TextBlock Text="{Binding PhysicalText}" Foreground="{StaticResource creamFaint}"
                                                    HorizontalAlignment="Center"/>
-                                        <TextBlock Text="{Binding DiagonalText}" Foreground="#93794F"
+                                        <TextBlock Text="{Binding DiagonalText}" Foreground="#6E7286"
                                                    HorizontalAlignment="Center"/>
                                     </StackPanel>
                                 </Viewbox>

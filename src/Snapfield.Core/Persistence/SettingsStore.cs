@@ -2,6 +2,15 @@ using System.Text.Json;
 
 namespace Snapfield.Core.Persistence;
 
+/// <summary>A remembered machine the user has controlled, for one-tap reconnect.</summary>
+public sealed record RecentConnection
+{
+    public string Name { get; init; } = "";   // remote machine name, or host until known
+    public string Host { get; init; } = "";
+    public int Port { get; init; } = 45654;
+    public string Pin { get; init; } = "";
+}
+
 /// <summary>App-level settings, persisted next to the layout file.</summary>
 public sealed record AppSettings
 {
@@ -18,6 +27,9 @@ public sealed record AppSettings
 
     /// <summary>Pairing code last used to connect to a receiver.</summary>
     public string ControllerPin { get; init; } = "";
+
+    /// <summary>Machines this PC has controlled, most-recent first.</summary>
+    public List<RecentConnection> Recent { get; init; } = new();
 }
 
 public static class SettingsStore
@@ -36,6 +48,16 @@ public static class SettingsStore
         }
         catch { /* corrupted settings -> defaults */ }
         return new AppSettings();
+    }
+
+    /// <summary>Adds or moves a connection to the front of the recent list (max 6, deduped by host).</summary>
+    public static void RememberConnection(RecentConnection conn)
+    {
+        var s = Load();
+        var recent = s.Recent.Where(r => !string.Equals(r.Host, conn.Host, StringComparison.OrdinalIgnoreCase)).ToList();
+        recent.Insert(0, conn);
+        if (recent.Count > 6) recent = recent.Take(6).ToList();
+        Save(s with { Recent = recent });
     }
 
     public static void Save(AppSettings settings)

@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Windows;
@@ -18,35 +19,33 @@ namespace Snapfield.App.ViewModels;
 public enum NetMode { Choose, Receiver, Controller }
 
 /// <summary>
-/// Drives the network sharing window. Opens on a role-selection page, then
-/// shows a dedicated page per role: the receiver page displays this PC's IP and
-/// a Listen button; the controller page has an IP box and a Connect button.
+/// Drives the network window across three pages:
+///   • Choose  — a toggle between 조작 기기 (controller) and 수신 기기 (receiver)
+///   • Controller — a list of recent machines + a form to add a new one
+///   • Receiver   — this PC's IP + pairing code, with a live "waiting / controlled" state
 /// </summary>
 public sealed class NetworkViewModel : ObservableObject
 {
     private readonly string _machineId = Environment.MachineName;
     private NetworkSession? _session;
 
-    public ICommand ChooseReceiverCommand { get; }
-    public ICommand ChooseControllerCommand { get; }
-    public ICommand BackCommand { get; }
-    public ICommand ListenCommand { get; }
-    public ICommand ConnectCommand { get; }
-    public ICommand StopCommand { get; }
-
     public NetworkViewModel()
     {
-        ChooseReceiverCommand = new RelayCommand(() => Mode = NetMode.Receiver);
-        ChooseControllerCommand = new RelayCommand(() => Mode = NetMode.Controller);
-        BackCommand = new RelayCommand(() => { Stop(); Mode = NetMode.Choose; }, () => true);
+        SelectControllerCommand = new RelayCommand(() => IsControllerSelected = true);
+        SelectReceiverCommand = new RelayCommand(() => IsControllerSelected = false);
+        ProceedCommand = new RelayCommand(() => Mode = IsControllerSelected ? NetMode.Controller : NetMode.Receiver);
+        BackCommand = new RelayCommand(() => { Stop(); ShowNewForm = false; Mode = NetMode.Choose; });
         ListenCommand = new RelayCommand(Listen, () => !IsActive);
         ConnectCommand = new RelayCommand(Connect, () => !IsActive && !string.IsNullOrWhiteSpace(RemoteHost) && !string.IsNullOrWhiteSpace(ControllerPin));
+        ConnectRecentCommand = new RelayCommand<RecentConnection>(ConnectRecent, r => r is not null && !IsActive);
+        ShowNewFormCommand = new RelayCommand(() => { ShowAdvanced = false; ShowNewForm = true; });
+        CloseSheetCommand = new RelayCommand(() => ShowNewForm = false);
+        ToggleAdvancedCommand = new RelayCommand(() => ShowAdvanced = !ShowAdvanced);
         StopCommand = new RelayCommand(Stop, () => IsActive);
+
         MachineName = _machineId;
         LocalIps = GetLocalIps();
 
-        // Pairing pins: the receiver pin is generated once and shown next to the
-        // IP; the controller pin is whatever the user last typed.
         var s = SettingsStore.Load();
         if (string.IsNullOrEmpty(s.ReceiverPin))
         {
@@ -55,47 +54,91 @@ public sealed class NetworkViewModel : ObservableObject
         }
         ReceiverPin = s.ReceiverPin;
         _controllerPin = s.ControllerPin;
+        foreach (var r in s.Recent) RecentConnections.Add(r);
     }
 
-    /// <summary>Code a controller must present to control this PC.</summary>
-    public string ReceiverPin { get; }
-
-    private string _controllerPin = "";
-    public string ControllerPin { get => _controllerPin; set => SetField(ref _controllerPin, value); }
+    public ICommand SelectControllerCommand { get; }
+    public ICommand SelectReceiverCommand { get; }
+    public ICommand ProceedCommand { get; }
+    public ICommand BackCommand { get; }
+    public ICommand ListenCommand { get; }
+    public ICommand ConnectCommand { get; }
+    public ICommand ConnectRecentCommand { get; }
+    public ICommand ShowNewFormCommand { get; }
+    public ICommand CloseSheetCommand { get; }
+    public ICommand ToggleAdvancedCommand { get; }
+    public ICommand StopCommand { get; }
 
     public string MachineName { get; }
-
-    /// <summary>This PC's IPv4 address(es), shown on the receiver page.</summary>
     public string LocalIps { get; }
+    public string ReceiverPin { get; }
+    public ObservableCollection<RecentConnection> RecentConnections { get; } = new();
+    public bool HasRecent => RecentConnections.Count > 0;
+    public bool NoRecent => RecentConnections.Count == 0;
 
-    // ── Page state ───────────────────────────────────────────────────────────
+    // ── Choose page (B3 toggle) ───────────────────────────────────────────────
+    private bool _isControllerSelected = true;
+    public bool IsControllerSelected
+    {
+        get => _isControllerSelected;
+        set { if (SetField(ref _isControllerSelected, value)) { OnPropertyChanged(nameof(IsReceiverSelected)); OnPropertyChanged(nameof(RoleDesc)); } }
+    }
+    public bool IsReceiverSelected => !_isControllerSelected;
+    public string RoleDesc => IsControllerSelected
+        ? "이 PC의 마우스·키보드로 다른 PC를 조작합니다."
+        : "다른 PC의 마우스·키보드를 이 PC로 받습니다.";
+
+    // ── Page routing ──────────────────────────────────────────────────────────
     private NetMode _mode = NetMode.Choose;
     public NetMode Mode
     {
         get => _mode;
         set
         {
-            if (SetField(ref _mode, value))
-            {
-                OnPropertyChanged(nameof(IsChoosePage));
-                OnPropertyChanged(nameof(IsReceiverPage));
-                OnPropertyChanged(nameof(IsControllerPage));
-            }
+            if (!SetField(ref _mode, value)) return;
+            OnPropertyChanged(nameof(IsChoosePage));
+            OnPropertyChanged(nameof(IsReceiverPage));
+            OnPropertyChanged(nameof(IsControllerPage));
         }
     }
     public bool IsChoosePage => Mode == NetMode.Choose;
     public bool IsReceiverPage => Mode == NetMode.Receiver;
     public bool IsControllerPage => Mode == NetMode.Controller;
 
-    // ── Shared state ─────────────────────────────────────────────────────────
+    // ── Shared / session state ────────────────────────────────────────────────
     private bool _isActive;
-    public bool IsActive { get => _isActive; private set => SetField(ref _isActive, value); }
+    public bool IsActive
+    {
+        get => _isActive;
+        private set { if (SetField(ref _isActive, value)) { OnPropertyChanged(nameof(IsIdle)); OnPropertyChanged(nameof(IsWaiting)); } }
+    }
+    public bool IsIdle => !_isActive;
+
+    private bool _isBeingControlled;
+    public bool IsBeingControlled
+    {
+        get => _isBeingControlled;
+        private set { if (SetField(ref _isBeingControlled, value)) OnPropertyChanged(nameof(IsWaiting)); }
+    }
+    /// <summary>Receiver has started listening but nobody is driving it yet.</summary>
+    public bool IsWaiting => _isActive && !_isBeingControlled;
+
+    private bool _showNewForm;
+    /// <summary>Whether the bottom "new connection" sheet is open.</summary>
+    public bool ShowNewForm { get => _showNewForm; set => SetField(ref _showNewForm, value); }
+
+    private bool _showAdvanced;
+    /// <summary>Port lives under "고급" — hidden by default (almost always 45654).</summary>
+    public bool ShowAdvanced { get => _showAdvanced; set => SetField(ref _showAdvanced, value); }
 
     private int _port = 45654;
     public int Port { get => _port; set => SetField(ref _port, value); }
 
     private string _remoteHost = "";
     public string RemoteHost { get => _remoteHost; set => SetField(ref _remoteHost, value); }
+
+    private string _controllerPin = "";
+    public string ControllerPin { get => _controllerPin; set => SetField(ref _controllerPin, value); }
 
     private double _sensitivity = 1.0;
     public double Sensitivity
@@ -119,8 +162,6 @@ public sealed class NetworkViewModel : ObservableObject
     // ── Actions ──────────────────────────────────────────────────────────────
     private void Listen()
     {
-        // Register the inbound firewall rule once (single UAC consent) so the
-        // controller can reach us without manual firewall work.
         var vm = this;
         new Thread(() =>
         {
@@ -134,32 +175,48 @@ public sealed class NetworkViewModel : ObservableObject
 
     private void Connect()
     {
-        StartSession(s => s.Connect(RemoteHost.Trim(), Port));
-        SettingsStore.Save(SettingsStore.Load() with
-        {
-            LastRole = "Controller",
-            LastHost = RemoteHost.Trim(),
-            LastPort = Port,
-            ControllerPin = ControllerPin.Trim(),
-        });
+        var host = RemoteHost.Trim();
+        var pin = ControllerPin.Trim();
+        ShowNewForm = false; // close the sheet as we connect
+        StartSession(s => s.Connect(host, Port));
+        SettingsStore.Save(SettingsStore.Load() with { LastRole = "Controller", LastHost = host, LastPort = Port, ControllerPin = pin });
+        Remember(host, Port, pin, host); // name refined once the peer says hello
     }
 
-    /// <summary>Re-starts the last session (called at app launch, before any window interaction).</summary>
+    private void ConnectRecent(RecentConnection? r)
+    {
+        if (r is null) return;
+        RemoteHost = r.Host;
+        Port = r.Port;
+        ControllerPin = r.Pin;
+        Connect();
+    }
+
+    private void Remember(string host, int port, string pin, string name)
+    {
+        SettingsStore.RememberConnection(new RecentConnection { Host = host, Port = port, Pin = pin, Name = name });
+        ReloadRecent();
+    }
+
+    private void ReloadRecent()
+    {
+        RecentConnections.Clear();
+        foreach (var r in SettingsStore.Load().Recent) RecentConnections.Add(r);
+        OnPropertyChanged(nameof(HasRecent));
+        OnPropertyChanged(nameof(NoRecent));
+    }
+
     public void RestoreLastSession()
     {
         var s = SettingsStore.Load();
         switch (s.LastRole)
         {
             case "Receiver":
-                Port = s.LastPort;
-                Mode = NetMode.Receiver;
-                Listen();
+                Port = s.LastPort; Mode = NetMode.Receiver; Listen();
                 break;
             case "Controller" when !string.IsNullOrWhiteSpace(s.LastHost):
-                Port = s.LastPort;
-                RemoteHost = s.LastHost;
-                Mode = NetMode.Controller;
-                Connect();
+                Port = s.LastPort; RemoteHost = s.LastHost; ControllerPin = s.ControllerPin;
+                Mode = NetMode.Controller; Connect();
                 break;
         }
     }
@@ -188,6 +245,7 @@ public sealed class NetworkViewModel : ObservableObject
         _session?.Dispose();
         _session = null;
         IsActive = false;
+        IsBeingControlled = false;
         Status = "";
         Side = "—";
         Detail = "";
@@ -196,7 +254,7 @@ public sealed class NetworkViewModel : ObservableObject
 
     public void ShutDown() => Stop();
 
-    // ── Session callbacks ────────────────────────────────────────────────────
+    // ── Session callbacks ─────────────────────────────────────────────────────
     private void OnStatus(string s) =>
         Application.Current?.Dispatcher.BeginInvoke(() => Status = s);
 
@@ -206,31 +264,33 @@ public sealed class NetworkViewModel : ObservableObject
         Application.Current?.Dispatcher.BeginInvoke(() =>
         {
             _remoteCount = remoteCount;
+            // Refine the recent entry's name now that the peer identified itself.
+            if (_session is { RemoteMachineId.Length: > 0 } && !string.IsNullOrWhiteSpace(RemoteHost))
+                Remember(RemoteHost.Trim(), Port, ControllerPin.Trim(), _session.RemoteMachineId);
             if (remoteCount == 0)
-                Status = "경고: 상대 PC가 모니터 0개를 보냈습니다 — 커서가 넘어갈 수 없습니다. " +
-                         "상대 PC의 Snapfield가 최신 버전인지 확인하세요.";
+                Status = "경고: 상대 PC가 모니터 0개를 보냈습니다 — 상대 Snapfield가 최신인지 확인하세요.";
         });
 
     private void OnEngineStatus(EngineStatus s) =>
         Application.Current?.Dispatcher.BeginInvoke(() =>
         {
             var remote = s.Captured || s.ActiveIsRemote;
-            Side = remote ? "REMOTE — 상대 PC 제어 중" : "LOCAL";
-            Detail = $"{s.ActiveMonitor}   ({s.VirtualXMm:0} mm, {s.VirtualYMm:0} mm)   ·   상대 모니터 {_remoteCount}개";
+            Side = remote ? "상대 PC 조작 중" : "이 PC (대기)";
+            Detail = $"{s.ActiveMonitor}   ({s.VirtualXMm:0}, {s.VirtualYMm:0} mm)   ·   상대 모니터 {_remoteCount}개";
             SideBrush = remote
                 ? new SolidColorBrush(Color.FromRgb(0xE0, 0x8A, 0x2A))
-                : new SolidColorBrush(Color.FromRgb(0x2E, 0xA0, 0x43));
+                : new SolidColorBrush(Color.FromRgb(0x3B, 0x77, 0xE8));
         });
 
     private void OnReceiverActivity(long count, int x, int y) =>
         Application.Current?.Dispatcher.BeginInvoke(() =>
         {
-            Side = "RECEIVING — 제어당하는 중";
+            IsBeingControlled = true;
+            Side = "제어당하는 중";
             Detail = $"{count}개 이동 수신 · 마지막 픽셀 ({x}, {y})";
             SideBrush = new SolidColorBrush(Color.FromRgb(0x2E, 0xA0, 0x43));
         });
 
-    // ── Helpers ──────────────────────────────────────────────────────────────
     private static string GetLocalIps()
     {
         try
@@ -241,9 +301,8 @@ public sealed class NetworkViewModel : ObservableObject
                 .SelectMany(n => n.GetIPProperties().UnicastAddresses)
                 .Where(a => a.Address.AddressFamily == AddressFamily.InterNetwork)
                 .Select(a => a.Address.ToString())
-                .Where(ip => !ip.StartsWith("169.254.")) // APIPA
-                .Distinct()
-                .ToList();
+                .Where(ip => !ip.StartsWith("169.254."))
+                .Distinct().ToList();
             return ips.Count > 0 ? string.Join("   ", ips) : "IP를 찾지 못했습니다";
         }
         catch { return "IP를 찾지 못했습니다"; }

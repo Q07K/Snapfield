@@ -123,6 +123,10 @@
                             <TextBlock Text="조작 기기" Foreground="#EAECF6" FontSize="15" FontWeight="Bold" VerticalAlignment="Center" Margin="12,0,0,0"/>
                         </StackPanel>
                         <StackPanel Visibility="{Binding IsIdle, Converter={StaticResource B2V}}">
+                            <!-- scanning hint until a receiver's beacon arrives -->
+                            <TextBlock Foreground="#5B6070" FontSize="11.5" Margin="0,16,0,0" TextWrapping="Wrap"
+                                       Text="같은 네트워크의 수신 기기를 찾는 중…  (수신 기기에서 '대기 시작'을 눌러야 나타납니다)"
+                                       Visibility="{Binding Scanning, Converter={StaticResource B2V}}"/>
                             <!-- auto-discovered receivers on the LAN -->
                             <TextBlock Text="같은 네트워크에서 발견됨" Foreground="#5FCF8A" FontSize="11.5" Margin="0,16,0,7"
                                        Visibility="{Binding HasDiscovered, Converter={StaticResource B2V}}"/>

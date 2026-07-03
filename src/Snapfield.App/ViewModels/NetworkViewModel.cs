@@ -89,6 +89,8 @@ public sealed class NetworkViewModel : ObservableObject
 
     public ObservableCollection<DiscoveredItem> Discovered { get; } = new();
     public bool HasDiscovered => Discovered.Count > 0;
+    /// <summary>Controller is scanning but hasn't heard a receiver yet.</summary>
+    public bool Scanning => _discovery is not null && Discovered.Count == 0;
 
     private DiscoveryListener? _discovery;
 
@@ -227,13 +229,16 @@ public sealed class NetworkViewModel : ObservableObject
         _discovery = new DiscoveryListener();
         _discovery.Found += OnPeerFound;
         _discovery.Start();
+        OnPropertyChanged(nameof(Scanning));
     }
 
     private void StopDiscovery()
     {
         _discovery?.Dispose();
         _discovery = null;
-        if (Discovered.Count > 0) { Discovered.Clear(); OnPropertyChanged(nameof(HasDiscovered)); }
+        if (Discovered.Count > 0) Discovered.Clear();
+        OnPropertyChanged(nameof(HasDiscovered));
+        OnPropertyChanged(nameof(Scanning));
     }
 
     private void OnPeerFound(DiscoveredPeer peer) =>
@@ -252,6 +257,7 @@ public sealed class NetworkViewModel : ObservableObject
             else { existing.Name = peer.Name; existing.Port = peer.Port; existing.LastSeen = now; }
 
             OnPropertyChanged(nameof(HasDiscovered));
+            OnPropertyChanged(nameof(Scanning));
         });
 
     private void Remember(string host, int port, string pin, string name)

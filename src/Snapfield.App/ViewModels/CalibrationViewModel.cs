@@ -52,16 +52,33 @@ public sealed class CalibrationViewModel : ObservableObject
             var saved = LayoutStore.Load(AppPaths.LayoutFile);
             if (saved is null) return;
 
-            // Only reload when the SET of monitors changed (e.g. a remote peer
-            // appeared) — never clobber in-progress drag edits for a plain save.
-            var fileKeys = saved.Monitors.Select(m => m.Key).ToHashSet();
-            var vmKeys = Monitors.Select(m => $"{m.MachineId}/{m.DeviceId}").ToHashSet();
-            if (fileKeys.SetEquals(vmKeys)) return;
-
             var detected = new MonitorEnumerator().Enumerate();
-            Populate(LayoutStore.Merge(detected, saved));
-            StatusText = "Remote monitors joined the plane — drag them into place and Save.";
+            var merged = LayoutStore.Merge(detected, saved);
+
+            // Reload on ANY change to the plane — a peer joining OR the controller
+            // moving/resizing a monitor (real-time sync). Skip when the file already
+            // matches what's on screen (our own save echo) to avoid needless rebuilds.
+            if (MatchesCurrent(merged)) return;
+            Populate(merged);
+            StatusText = "배치가 업데이트되었습니다.";
         });
+    }
+
+    /// <summary>True if the given layout matches the on-screen monitors in identity,
+    /// position and size (within rounding) — i.e. nothing actually changed.</summary>
+    private bool MatchesCurrent(DesktopLayout layout)
+    {
+        if (layout.Monitors.Count != Monitors.Count) return false;
+        foreach (var m in layout.Monitors)
+        {
+            var vm = Monitors.FirstOrDefault(x => x.MachineId == m.MachineId && x.DeviceId == m.DeviceId);
+            if (vm is null) return false;
+            var b = m.PhysicalBounds;
+            if (Math.Abs(vm.XMm - b.XMm) > 0.5 || Math.Abs(vm.YMm - b.YMm) > 0.5 ||
+                Math.Abs(vm.WidthMm - b.WidthMm) > 0.5 || Math.Abs(vm.HeightMm - b.HeightMm) > 0.5)
+                return false;
+        }
+        return true;
     }
 
     // ── Transform state ──────────────────────────────────────────────────────

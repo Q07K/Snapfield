@@ -84,17 +84,11 @@ public sealed class TrayManager : IDisposable
         catch { /* best-effort */ }
     }
 
-    // ── Icon: two little monitors on the shared plane ────────────────────────
+    // ── Icon: the shared "Stack" mark, same as the app/window icon ────────────
 
     private static Icon CreateIcon()
     {
-        using var bmp = new Bitmap(32, 32);
-        using var g = Graphics.FromImage(bmp);
-        g.Clear(Color.Transparent);
-        using var blue = new SolidBrush(Color.FromArgb(0x4A, 0x7B, 0xE0));
-        using var orange = new SolidBrush(Color.FromArgb(0xE0, 0xA4, 0x4A));
-        g.FillRectangle(blue, 2, 7, 17, 13);
-        g.FillRectangle(orange, 21, 11, 9, 9);
+        using var bmp = Snapfield.Platform.IconArt.Render(32);
         return Icon.FromHandle(bmp.GetHicon());
     }
 

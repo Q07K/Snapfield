@@ -8,73 +8,53 @@ namespace Snapfield.Platform.Net;
 public enum PeerRole { None, Controller, Receiver }
 
 /// <summary>
-/// A cross-machine sharing session.
+/// A sharing session.
 ///
-/// The machine that calls <see cref="Connect"/> is the CONTROLLER (it has the
-/// physical keyboard/mouse); the one that calls <see cref="Listen"/> is the
-/// RECEIVER. On connect both send <see cref="MsgType.Hello"/> with their monitors;
-/// the controller then builds a combined layout (local monitors + the receiver's
-/// placed to the right) and runs the <see cref="InputEngine"/>. When the cursor
-/// crosses onto a receiver monitor, the controller streams cursor/button/wheel/key
-/// events; the receiver injects them.
+/// A RECEIVER (<see cref="Listen"/>) accepts a single controller and injects its
+/// input. A CONTROLLER (<see cref="Connect"/>) is a hub: it may connect to many
+/// receivers at once, places them all on one global plane, runs a single
+/// <see cref="InputEngine"/>, and routes each cursor/button/key event to the
+/// receiver that owns the monitor the cursor is currently on. Clipboard and the
+/// combined layout are broadcast to every connected receiver.
 ///
-/// The session outlives individual connections: when a link drops it releases
-/// the engine (freeing captured input) and automatically retries — the
-/// controller re-connects, the receiver re-listens — until <see cref="Dispose"/>.
+/// Each connection encrypts + PIN-authenticates independently and reconnects on
+/// its own if it drops.
 /// </summary>
 public sealed class NetworkSession : IDisposable
 {
     private const int ReconnectDelayMs = 3000;
     private const int RelistenDelayMs = 500;
+    private const long FileTotalCap = 32L * 1024 * 1024;
 
     private readonly string _localMachineId;
     private readonly IReadOnlyList<MonitorInfo> _localMonitors;
-
-    private PeerLink? _link;
-    private InputEngine? _engine;
-    private int _linkGen;                 // stale-event guard: one generation per link
+    private readonly object _lock = new();
+    private readonly List<Conn> _conns = new();
     private volatile bool _disposed;
-    private int _reconnectAttempt;
-    private string _host = "";
-    private int _port;
 
-    public PeerRole Role { get; private set; } = PeerRole.None;
-    public string RemoteMachineId { get; private set; } = "";
-    public int RemoteMonitorCount { get; private set; }
-
+    private InputEngine? _engine;          // controller only, shared across peers
+    private string? _activeRemote;         // machine the cursor is currently on
+    private ClipboardMonitor? _clipboard;
+    private string _lastAppliedClipboard = "";
+    private Beacon? _beacon;               // receiver only
     private long _rxCount;
     private double _sensitivity = 1.0;
 
-    // Clipboard state
-    private ClipboardMonitor? _clipboard;
-    private Beacon? _beacon;
-    private string _lastAppliedClipboard = "";
-
-    /// <summary>Pin this machine requires from controllers (receiver role). Empty = accept anyone.</summary>
+    public PeerRole Role { get; private set; } = PeerRole.None;
     public string ReceiverPin { get; init; } = "";
-
-    /// <summary>Pin sent when connecting to a receiver (controller role).</summary>
     public string ControllerPin { get; init; } = "";
-
-    public event Action<string>? Status;
-    public event Action<EngineStatus>? EngineStatus;
-    public event Action<int>? ControllerReady;             // remote monitor count (controller)
-    public event Action<long, int, int>? ReceiverActivity; // (count, x, y) injected (receiver)
-
     public int LocalMonitorCount => _localMonitors.Count;
 
-    /// <summary>Remote-cursor speed multiplier; applies live to a running engine.</summary>
     public double Sensitivity
     {
         get => _sensitivity;
-        set
-        {
-            _sensitivity = value;
-            if (_engine is not null) _engine.Sensitivity = value;
-        }
+        set { _sensitivity = value; if (_engine is not null) _engine.Sensitivity = value; }
     }
 
-    private IReadOnlyList<MonitorInfo> _lastRemoteMonitors = Array.Empty<MonitorInfo>();
+    public event Action<string>? Status;
+    public event Action<EngineStatus>? EngineStatus;
+    public event Action<long, int, int>? ReceiverActivity;             // (count, x, y) — receiver
+    public event Action<IReadOnlyList<string>>? PeersChanged;          // connected receiver names — controller
 
     public NetworkSession(string localMachineId, IReadOnlyList<MonitorInfo> localMonitors)
     {
@@ -83,162 +63,63 @@ public sealed class NetworkSession : IDisposable
         LayoutStore.Saved += OnLayoutSaved;
     }
 
-    /// <summary>Re-route against the newly calibrated plane without reconnecting.</summary>
-    private void OnLayoutSaved()
-    {
-        if (_disposed || _engine is null || Role != PeerRole.Controller) return;
-        var combined = PhysicalLayoutBuilder.Calibrated(
-            _localMonitors, _lastRemoteMonitors, LayoutStore.Load(LayoutStore.DefaultPath));
-        _engine.UpdateLayout(new DesktopLayout(combined));
-        _link?.Send(NetMessage.LayoutSync(combined.Select(MonitorState.From).ToArray()));
-        Status?.Invoke("Calibration applied to the live session.");
-    }
-
-    public void Connect(string host, int port)
-    {
-        Role = PeerRole.Controller;
-        _host = host;
-        _port = port;
-        Status?.Invoke($"Connecting to {host}:{port} …");
-        StartLink(l => l.Connect(host, port, ControllerPin));
-    }
-
+    // ── entry points ──────────────────────────────────────────────────────────
     public void Listen(int port)
     {
         Role = PeerRole.Receiver;
-        _port = port;
-        Status?.Invoke($"Listening on port {port} — waiting for a controller to connect …");
-        StartLink(l => l.Listen(port, ReceiverPin));
-
-        // Advertise on the LAN so controllers can find us without typing an IP.
+        var conn = new Conn(this, initiator: false, host: "", port, ReceiverPin);
+        lock (_lock) _conns.Add(conn);
+        conn.Start();
         _beacon = new Beacon();
         _beacon.Start(_localMachineId, port);
+        Status?.Invoke($"포트 {port}에서 대기 중 — 조작 기기의 연결을 기다립니다.");
     }
 
-    // ── Link lifecycle ───────────────────────────────────────────────────────
-
-    private void StartLink(Action<PeerLink> begin)
+    public void Connect(string host, int port, string pin)
     {
-        var gen = ++_linkGen;
-        var link = new PeerLink();
-        link.Connected += () => { if (IsCurrent(gen)) OnConnected(link); };
-        link.MessageReceived += m => { if (IsCurrent(gen)) OnMessage(link, m); };
-        link.Disconnected += reason => OnLinkDown(gen, reason);
-        _link = link;
-        begin(link);
-    }
-
-    private bool IsCurrent(int gen) => !_disposed && gen == _linkGen;
-
-    private void OnLinkDown(int gen, string reason)
-    {
-        if (!IsCurrent(gen)) return;
-
-        // Release the hooks/capture immediately: with the peer gone, swallowed
-        // mouse AND keyboard input would otherwise leave this machine locked.
-        _engine?.Dispose();
-        _engine = null;
-        _clipboard?.Dispose();
-        _clipboard = null;
-        try { _link?.Dispose(); } catch { }
-        _link = null;
-
-        if (reason.StartsWith("AUTH:", StringComparison.Ordinal))
+        Role = PeerRole.Controller;
+        lock (_lock)
         {
-            // Wrong pairing code — the encrypted handshake rejected it. Don't spam retries.
-            Status?.Invoke(reason["AUTH:".Length..].Trim() + " 코드를 확인하고 다시 연결하세요.");
-            return;
+            if (_conns.Any(c => c.Host.Equals(host, StringComparison.OrdinalIgnoreCase) && c.Port == port)) return; // already connected/ing
         }
-
-        var delay = Role == PeerRole.Receiver ? RelistenDelayMs : ReconnectDelayMs;
-        Status?.Invoke($"Disconnected: {reason} — retrying in {delay / 1000.0:0.#}s …");
-
-        var t = new Thread(() =>
-        {
-            Thread.Sleep(delay);
-            if (!IsCurrent(gen)) return; // user stopped or a newer link exists
-            _reconnectAttempt++;
-            if (Role == PeerRole.Controller)
-            {
-                Status?.Invoke($"Reconnecting to {_host}:{_port} (attempt {_reconnectAttempt}) …");
-                StartLink(l => l.Connect(_host, _port, ControllerPin));
-            }
-            else
-            {
-                Status?.Invoke($"Listening again on port {_port} (attempt {_reconnectAttempt}) …");
-                StartLink(l => l.Listen(_port, ReceiverPin));
-            }
-        }) { IsBackground = true, Name = "Snapfield.Reconnect" };
-        t.Start();
+        var conn = new Conn(this, initiator: true, host, port, pin);
+        lock (_lock) _conns.Add(conn);
+        conn.Start();
+        Status?.Invoke($"{host} 연결 중 …");
     }
 
-    // ── Handshake + messages ─────────────────────────────────────────────────
-
-    private void OnConnected(PeerLink link)
+    // ── connection callbacks (from Conn) ───────────────────────────────────────
+    private void OnConnected(Conn c)
     {
-        _reconnectAttempt = 0;
         if (Role == PeerRole.Controller)
-        {
-            // Channel is already encrypted and PIN-authenticated by the handshake;
-            // Hello now just carries the monitor layout.
-            var monitors = _localMonitors.Select(MonitorState.From).ToArray();
-            link.Send(NetMessage.Hello(_localMachineId, monitors));
-            Status?.Invoke("Connected — 레이아웃 교환 중 …");
-        }
+            c.Link!.Send(NetMessage.Hello(_localMachineId, _localMonitors.Select(MonitorState.From).ToArray()));
         else
-        {
             Status?.Invoke("암호화 연결됨 — 컨트롤러의 hello 대기 중 …");
-        }
     }
 
-    private void OnMessage(PeerLink link, NetMessage msg)
+    private void OnMessage(Conn c, NetMessage msg)
     {
         switch (msg.Type)
         {
             case MsgType.Hello:
-                RemoteMachineId = msg.MachineId ?? "remote";
-                var remoteMonitors = (msg.Monitors ?? Array.Empty<MonitorState>())
-                    .Select(s => s.ToMonitorInfo()).ToList();
+                c.MachineId = msg.MachineId ?? "remote";
+                c.Monitors = (msg.Monitors ?? Array.Empty<MonitorState>()).Select(s => s.ToMonitorInfo()).ToList();
                 if (Role == PeerRole.Controller)
                 {
-                    StartController(link, remoteMonitors);
-                    StartClipboardSync(link);
+                    EnsureClipboard();
+                    RebuildEngine();
+                    RaisePeers();
+                    Status?.Invoke($"'{c.MachineId}' 연결됨 — 총 {ConnectedCount}대 조작 중.");
                 }
                 else
                 {
-                    var mine = _localMonitors.Select(MonitorState.From).ToArray();
-                    link.Send(NetMessage.Hello(_localMachineId, mine));
-                    StartClipboardSync(link);
-                    Status?.Invoke($"'{RemoteMachineId}'에 연결됨 (모니터 {remoteMonitors.Count}대). 제어 대기 중.");
+                    c.Link!.Send(NetMessage.Hello(_localMachineId, _localMonitors.Select(MonitorState.From).ToArray()));
+                    EnsureClipboard();
+                    Status?.Invoke($"'{c.MachineId}'에 연결됨 (모니터 {c.Monitors.Count}대). 제어 대기 중.");
                 }
                 break;
 
-            case MsgType.Clipboard:
-                if (msg.Text is { Length: > 0 } incoming)
-                {
-                    _lastAppliedClipboard = incoming;
-                    ClipboardIO.TrySetText(incoming);
-                    _clipboard?.NoteSelfChange();
-                }
-                break;
-
-            case MsgType.ClipboardImage:
-                if (msg.Text is { Length: > 0 } b64)
-                {
-                    try
-                    {
-                        ClipboardIO.TrySetImagePng(Convert.FromBase64String(b64));
-                        _clipboard?.NoteSelfChange();
-                    }
-                    catch { /* malformed payload — ignore */ }
-                }
-                break;
-
-            case MsgType.ClipboardFiles:
-                if (msg.Files is { Length: > 0 } files) ReceiveFiles(files);
-                break;
-
-            // Receiver side: reproduce the controller's input locally.
+            // Receiver-side injection.
             case MsgType.CursorMove:
                 CursorInjector.WarpTo(msg.X, msg.Y);
                 ReceiverActivity?.Invoke(++_rxCount, msg.X, msg.Y);
@@ -246,79 +127,121 @@ public sealed class NetworkSession : IDisposable
             case MsgType.MouseButton: CursorInjector.MouseButton(msg.Button, msg.Down); break;
             case MsgType.MouseWheel: CursorInjector.Wheel(msg.WheelDelta, msg.Horizontal); break;
             case MsgType.Key: CursorInjector.KeyEvent(msg.Vk, msg.Scan, msg.Down, msg.Extended); break;
-            case MsgType.ControlEnter: Status?.Invoke("Controller took over this screen."); break;
-            case MsgType.ControlLeave: Status?.Invoke("Controller left this screen."); break;
-
-            // Receiver: mirror the controller's combined plane into our layout file
-            // so the 모니터 배치 tab shows the same global arrangement (LayoutStore.Saved
-            // then refreshes the calibration canvas).
+            case MsgType.ControlEnter: Status?.Invoke("조작 기기가 이 화면을 넘겨받았습니다."); break;
+            case MsgType.ControlLeave: Status?.Invoke("조작 기기가 이 화면을 떠났습니다."); break;
+            case MsgType.Clipboard:
+                if (msg.Text is { Length: > 0 } t) { _lastAppliedClipboard = t; ClipboardIO.TrySetText(t); _clipboard?.NoteSelfChange(); }
+                break;
+            case MsgType.ClipboardImage:
+                if (msg.Text is { Length: > 0 } b64)
+                    try { ClipboardIO.TrySetImagePng(Convert.FromBase64String(b64)); _clipboard?.NoteSelfChange(); } catch { }
+                break;
+            case MsgType.ClipboardFiles:
+                if (msg.Files is { Length: > 0 } files) ReceiveFiles(files);
+                break;
             case MsgType.Layout:
-                if (Role == PeerRole.Receiver && msg.Monitors is { Length: > 0 })
-                    LayoutStore.Save(LayoutStore.DefaultPath,
-                        new DesktopLayout(msg.Monitors.Select(s => s.ToMonitorInfo())));
+                if (Role == PeerRole.Receiver && msg.Monitors is { Length: > 0 } plane)
+                    LayoutStore.Save(LayoutStore.DefaultPath, new DesktopLayout(plane.Select(s => s.ToMonitorInfo())));
                 break;
         }
     }
 
-    private void StartController(PeerLink link, IReadOnlyList<MonitorInfo> remoteMonitors)
+    private void OnDown(Conn c, string reason)
     {
-        _engine?.Dispose(); // a reconnect replaces any previous engine
-        _lastRemoteMonitors = remoteMonitors;
+        if (Role == PeerRole.Controller)
+        {
+            // Drop this peer's monitors and re-plan the plane.
+            var wasKnown = c.MachineId.Length > 0;
+            c.Monitors = new List<MonitorInfo>();
+            if (wasKnown) { RebuildEngine(); RaisePeers(); }
+        }
 
-        // Route the way the user calibrated it; un-calibrated monitors fall back
-        // to the automatic arrangement (locals Windows-aligned, remotes appended
-        // right). Then persist the combined plane so the calibration canvas shows
-        // the remote monitors and the user can drag them into place.
-        var saved = LayoutStore.Load(LayoutStore.DefaultPath);
-        var combined = new DesktopLayout(PhysicalLayoutBuilder.Calibrated(_localMonitors, remoteMonitors, saved));
-        PersistPlane(combined, saved);
+        if (reason.StartsWith("AUTH:", StringComparison.Ordinal))
+        {
+            Status?.Invoke(reason["AUTH:".Length..].Trim() + " 코드를 확인하고 다시 연결하세요.");
+            lock (_lock) _conns.Remove(c);
+            RaisePeers();
+            return;
+        }
 
-        _engine = new InputEngine(_localMachineId, combined) { Sensitivity = _sensitivity };
-        _engine.RemoteCursor += (_, x, y) => link.Send(NetMessage.Cursor(x, y));
-        _engine.RemoteButton += (b, down) => link.Send(NetMessage.MouseBtn(b, down));
-        _engine.RemoteWheel += (d, h) => link.Send(NetMessage.Wheel(d, h));
-        _engine.RemoteKey += (vk, scan, down, ext) => link.Send(NetMessage.KeyEvent(vk, scan, down, ext));
-        _engine.ControlEnteredRemote += _ => link.Send(NetMessage.Enter());
-        _engine.ControlReturnedLocal += () => link.Send(NetMessage.Leave());
-        _engine.StatusChanged += s => EngineStatus?.Invoke(s);
-
-        // Publish the remote count BEFORE the engine's first status event so the
-        // UI never renders a stale "0 remote monitors".
-        RemoteMonitorCount = remoteMonitors.Count;
-        ControllerReady?.Invoke(remoteMonitors.Count);
-        _engine.Start();
-
-        // Send the combined plane so the receiver's calibration canvas mirrors it.
-        link.Send(NetMessage.LayoutSync(combined.Monitors.Select(MonitorState.From).ToArray()));
-
-        Status?.Invoke($"Controlling '{RemoteMachineId}' ({remoteMonitors.Count} remote monitor(s)). " +
-                       "Push the cursor off the right edge to cross over.");
+        var delay = Role == PeerRole.Receiver ? RelistenDelayMs : ReconnectDelayMs;
+        Status?.Invoke($"'{(c.MachineId.Length > 0 ? c.MachineId : c.Host)}' 연결 끊김: {reason} — {delay / 1000.0:0.#}초 후 재시도 …");
+        c.ScheduleReconnect(delay);
     }
 
-    /// <summary>
-    /// Mirrors local clipboard text to the peer. The peer records what it applied,
-    /// so its own monitor skips the echo and the pair can't ping-pong.
-    /// </summary>
-    private void StartClipboardSync(PeerLink link)
+    // ── controller: engine + routing ────────────────────────────────────────
+    private void RebuildEngine()
     {
-        _clipboard?.Dispose();
-        _clipboard = new ClipboardMonitor();
-        _clipboard.TextChanged += text =>
+        List<MonitorInfo> remote;
+        lock (_lock) remote = _conns.SelectMany(x => x.Monitors).ToList();
+
+        var saved = LayoutStore.Load(LayoutStore.DefaultPath);
+        var combined = new DesktopLayout(PhysicalLayoutBuilder.Calibrated(_localMonitors, remote, saved));
+        PersistPlane(combined, saved);
+
+        if (_engine is null)
         {
-            if (text == _lastAppliedClipboard) return; // our own application of the peer's copy
-            link.Send(NetMessage.ClipboardText(text));
-        };
-        _clipboard.ImageChanged += png => link.Send(NetMessage.ClipboardPng(png));
-        _clipboard.FilesChanged += paths => SendFiles(paths, link);
+            _engine = new InputEngine(_localMachineId, combined) { Sensitivity = _sensitivity };
+            _engine.RemoteCursor += (mid, x, y) => { _activeRemote = mid; LinkFor(mid)?.Send(NetMessage.Cursor(x, y)); };
+            _engine.RemoteButton += (b, down) => LinkFor(_activeRemote)?.Send(NetMessage.MouseBtn(b, down));
+            _engine.RemoteWheel += (d, h) => LinkFor(_activeRemote)?.Send(NetMessage.Wheel(d, h));
+            _engine.RemoteKey += (vk, sc, down, ext) => LinkFor(_activeRemote)?.Send(NetMessage.KeyEvent(vk, sc, down, ext));
+            _engine.ControlEnteredRemote += mid => { _activeRemote = mid; LinkFor(mid)?.Send(NetMessage.Enter()); };
+            _engine.ControlReturnedLocal += () => { LinkFor(_activeRemote)?.Send(NetMessage.Leave()); _activeRemote = null; };
+            _engine.StatusChanged += s => EngineStatus?.Invoke(s);
+            _engine.Start();
+        }
+        else
+        {
+            _engine.UpdateLayout(combined);
+        }
+
+        Broadcast(NetMessage.LayoutSync(combined.Monitors.Select(MonitorState.From).ToArray()));
+    }
+
+    private PeerLink? LinkFor(string? machineId)
+    {
+        if (machineId is null) return null;
+        lock (_lock) return _conns.FirstOrDefault(c => c.MachineId == machineId)?.Link;
+    }
+
+    private void Broadcast(NetMessage m)
+    {
+        List<Conn> snapshot;
+        lock (_lock) snapshot = _conns.ToList();
+        foreach (var c in snapshot) c.Link?.Send(m);
+    }
+
+    private int ConnectedCount { get { lock (_lock) return _conns.Count(c => c.MachineId.Length > 0); } }
+    private void RaisePeers()
+    {
+        List<string> names;
+        lock (_lock) names = _conns.Where(c => c.MachineId.Length > 0).Select(c => c.MachineId).ToList();
+        PeersChanged?.Invoke(names);
+    }
+
+    private void OnLayoutSaved()
+    {
+        if (_disposed || _engine is null || Role != PeerRole.Controller) return;
+        List<MonitorInfo> remote;
+        lock (_lock) remote = _conns.SelectMany(x => x.Monitors).ToList();
+        var combined = PhysicalLayoutBuilder.Calibrated(_localMonitors, remote, LayoutStore.Load(LayoutStore.DefaultPath));
+        _engine.UpdateLayout(new DesktopLayout(combined));
+        Broadcast(NetMessage.LayoutSync(combined.Select(MonitorState.From).ToArray()));
+    }
+
+    // ── clipboard (both roles) ────────────────────────────────────────────────
+    private void EnsureClipboard()
+    {
+        if (_clipboard is not null) return;
+        _clipboard = new ClipboardMonitor();
+        _clipboard.TextChanged += text => { if (text != _lastAppliedClipboard) Broadcast(NetMessage.ClipboardText(text)); };
+        _clipboard.ImageChanged += png => Broadcast(NetMessage.ClipboardPng(png));
+        _clipboard.FilesChanged += paths => SendFiles(paths);
         _clipboard.Start();
     }
 
-    private const long FileTotalCap = 32L * 1024 * 1024; // 32 MB across all copied files
-    private static string ReceivedDir => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Snapfield", "Received");
-
-    /// <summary>Reads copied files and sends them to the peer, within a size cap.</summary>
-    private void SendFiles(string[] paths, PeerLink link)
+    private void SendFiles(string[] paths)
     {
         try
         {
@@ -326,18 +249,19 @@ public sealed class NetworkSession : IDisposable
             var items = new List<SharedFile>();
             foreach (var p in paths)
             {
-                if (!File.Exists(p)) continue;         // folders/unsupported — skip
-                var info = new FileInfo(p);
-                total += info.Length;
+                if (!File.Exists(p)) continue;
+                total += new FileInfo(p).Length;
                 if (total > FileTotalCap) { Status?.Invoke($"파일이 너무 큽니다(>{FileTotalCap / 1024 / 1024}MB) — 전송 생략."); return; }
                 items.Add(new SharedFile { Name = Path.GetFileName(p), Data = Convert.ToBase64String(File.ReadAllBytes(p)) });
             }
-            if (items.Count > 0) link.Send(NetMessage.ClipboardFilesMsg(items.ToArray()));
+            if (items.Count > 0) Broadcast(NetMessage.ClipboardFilesMsg(items.ToArray()));
         }
-        catch { /* unreadable file — skip silently */ }
+        catch { }
     }
 
-    /// <summary>Writes received files locally and puts them on the clipboard, paste-ready.</summary>
+    private static string ReceivedDir => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Snapfield", "Received");
+
     private void ReceiveFiles(SharedFile[] files)
     {
         try
@@ -346,7 +270,7 @@ public sealed class NetworkSession : IDisposable
             var written = new List<string>();
             foreach (var f in files)
             {
-                var name = Path.GetFileName(f.Name); // strip any path components
+                var name = Path.GetFileName(f.Name);
                 if (string.IsNullOrWhiteSpace(name)) continue;
                 var dest = Path.Combine(ReceivedDir, name);
                 File.WriteAllBytes(dest, Convert.FromBase64String(f.Data));
@@ -359,34 +283,83 @@ public sealed class NetworkSession : IDisposable
                 Status?.Invoke($"파일 {written.Count}개 수신 — 붙여넣기(Ctrl+V) 가능.");
             }
         }
-        catch { /* write/clipboard failure — ignore */ }
+        catch { }
     }
 
-    /// <summary>
-    /// Saves the combined plane while preserving calibrated monitors of machines
-    /// that are not part of this session (a third PC calibrated earlier must not
-    /// be dropped by a two-machine connection).
-    /// </summary>
     private void PersistPlane(DesktopLayout combined, DesktopLayout? saved)
     {
         try
         {
             var sessionMachines = combined.Monitors.Select(m => m.MachineId).ToHashSet();
-            var others = saved?.Monitors.Where(m => !sessionMachines.Contains(m.MachineId))
-                         ?? Enumerable.Empty<MonitorInfo>();
+            var others = saved?.Monitors.Where(m => !sessionMachines.Contains(m.MachineId)) ?? Enumerable.Empty<MonitorInfo>();
             LayoutStore.Save(LayoutStore.DefaultPath, new DesktopLayout(combined.Monitors.Concat(others)));
         }
-        catch { /* persistence is best-effort; routing already has the layout */ }
+        catch { }
     }
 
     public void Dispose()
     {
         _disposed = true;
-        _linkGen++; // invalidate any pending reconnect
         LayoutStore.Saved -= OnLayoutSaved;
+        List<Conn> snapshot;
+        lock (_lock) { snapshot = _conns.ToList(); _conns.Clear(); }
+        foreach (var c in snapshot) c.Stop();
         _beacon?.Dispose();
         _clipboard?.Dispose();
         _engine?.Dispose();
-        _link?.Dispose();
+    }
+
+    // ── one connection (link + reconnect) ─────────────────────────────────────
+    private sealed class Conn
+    {
+        private readonly NetworkSession _s;
+        private readonly string _pin;
+        public readonly bool Initiator;
+        public readonly string Host;
+        public readonly int Port;
+        public PeerLink? Link;
+        public string MachineId = "";
+        public List<MonitorInfo> Monitors = new();
+        private int _gen;
+        private volatile bool _stopped;
+
+        public Conn(NetworkSession s, bool initiator, string host, int port, string pin)
+        {
+            _s = s; Initiator = initiator; Host = host; Port = port; _pin = pin;
+        }
+
+        public void Start()
+        {
+            var gen = ++_gen;
+            var link = new PeerLink();
+            Link = link;
+            link.Connected += () => { if (Current(gen)) _s.OnConnected(this); };
+            link.MessageReceived += m => { if (Current(gen)) _s.OnMessage(this, m); };
+            link.Disconnected += r => { if (Current(gen)) _s.OnDown(this, r); };
+            if (Initiator) link.Connect(Host, Port, _pin);
+            else link.Listen(Port, _pin);
+        }
+
+        public void ScheduleReconnect(int delayMs)
+        {
+            var gen = _gen;
+            var t = new Thread(() =>
+            {
+                Thread.Sleep(delayMs);
+                if (!Current(gen)) return;
+                try { Link?.Dispose(); } catch { }
+                Start();
+            }) { IsBackground = true, Name = "Snapfield.Reconnect" };
+            t.Start();
+        }
+
+        private bool Current(int gen) => !_stopped && !_s._disposed && gen == _gen;
+
+        public void Stop()
+        {
+            _stopped = true;
+            _gen++;
+            try { Link?.Dispose(); } catch { }
+        }
     }
 }

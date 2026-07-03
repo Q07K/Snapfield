@@ -122,7 +122,35 @@
                             <Button Content="← 뒤로" Command="{Binding BackCommand}" Padding="10,5"/>
                             <TextBlock Text="조작 기기" Foreground="#EAECF6" FontSize="15" FontWeight="Bold" VerticalAlignment="Center" Margin="12,0,0,0"/>
                         </StackPanel>
-                        <StackPanel Visibility="{Binding IsIdle, Converter={StaticResource B2V}}">
+
+                        <!-- connected receivers (the hub can hold several at once) -->
+                        <StackPanel Visibility="{Binding HasPeers, Converter={StaticResource B2V}}" Margin="0,14,0,0">
+                            <Border CornerRadius="11" Padding="12" Background="{Binding SideBrush}">
+                                <StackPanel>
+                                    <TextBlock Text="{Binding Side}" Foreground="White" FontSize="14" FontWeight="Bold" HorizontalAlignment="Center"/>
+                                    <TextBlock Text="{Binding Detail}" Foreground="#EEE" FontSize="11" HorizontalAlignment="Center" Margin="0,4,0,0" TextWrapping="Wrap" TextAlignment="Center"/>
+                                </StackPanel>
+                            </Border>
+                            <TextBlock Text="연결된 기기" Foreground="#9A9EAD" FontSize="11.5" Margin="0,12,0,6"/>
+                            <ItemsControl ItemsSource="{Binding ConnectedPeers}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Background="#161620" CornerRadius="8" Padding="11,9" Margin="0,0,0,5">
+                                            <DockPanel LastChildFill="False">
+                                                <TextBlock Text="{Binding}" Foreground="#EAECF6" FontWeight="SemiBold" FontSize="13" DockPanel.Dock="Left"/>
+                                                <TextBlock Text="● 연결됨" Foreground="#5FCF8A" FontSize="11" DockPanel.Dock="Right" VerticalAlignment="Center"/>
+                                            </DockPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <TextBlock Text="커서를 화면 끝으로 밀어 넘어가세요 · 원격 조작 중 Ctrl 3번 = 즉시 복귀"
+                                       Foreground="#5B6070" FontSize="11" Margin="0,2,0,0" TextWrapping="Wrap"/>
+                            <Button Content="모두 끊기" Command="{Binding StopCommand}" HorizontalAlignment="Left" Margin="0,10,0,0"/>
+                        </StackPanel>
+
+                        <!-- add receivers — always available; the hub can add more -->
+                        <StackPanel>
                             <!-- scanning hint until a receiver's beacon arrives -->
                             <TextBlock Foreground="#5B6070" FontSize="11.5" Margin="0,16,0,0" TextWrapping="Wrap"
                                        Text="같은 네트워크의 수신 기기를 찾는 중…  (수신 기기에서 '대기 시작'을 눌러야 나타납니다)"
@@ -176,17 +204,6 @@
                                        Margin="0,18,0,14" TextAlignment="Center" Visibility="{Binding NoRecent, Converter={StaticResource B2V}}"/>
                             <Button Content="＋ 새 기기 연결" Command="{Binding ShowNewFormCommand}" Style="{StaticResource PrimaryButton}"
                                     HorizontalAlignment="Left" Margin="0,10,0,0"/>
-                        </StackPanel>
-                        <StackPanel Visibility="{Binding IsActive, Converter={StaticResource B2V}}" Margin="0,16,0,0">
-                            <Border CornerRadius="11" Padding="14" Background="{Binding SideBrush}">
-                                <StackPanel>
-                                    <TextBlock Text="{Binding Side}" Foreground="White" FontSize="16" FontWeight="Bold" HorizontalAlignment="Center"/>
-                                    <TextBlock Text="{Binding Detail}" Foreground="#EEE" FontSize="11.5" HorizontalAlignment="Center" Margin="0,5,0,0" TextWrapping="Wrap" TextAlignment="Center"/>
-                                </StackPanel>
-                            </Border>
-                            <TextBlock Text="커서를 화면 오른쪽 끝으로 밀어 상대 PC로 넘어가세요." Foreground="#7E8296" FontSize="11.5" TextAlignment="Center" Margin="0,12,0,0"/>
-                            <TextBlock Text="원격 조작 중 Ctrl 을 3번 빠르게 누르면 즉시 이 PC로 돌아옵니다." Foreground="#5B6070" FontSize="11" TextAlignment="Center" Margin="0,4,0,0"/>
-                            <Button Content="연결 끊기" Command="{Binding StopCommand}" HorizontalAlignment="Center" Margin="0,14,0,0"/>
                         </StackPanel>
                         <TextBlock Text="{Binding Status}" Foreground="#7E8296" TextWrapping="Wrap" FontSize="11" Margin="0,12,0,0"/>
                     </StackPanel>

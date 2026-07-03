@@ -36,9 +36,11 @@ public sealed class NetworkViewModel : ObservableObject
         ProceedCommand = new RelayCommand(() => Mode = IsControllerSelected ? NetMode.Controller : NetMode.Receiver);
         BackCommand = new RelayCommand(() => { Stop(); ShowNewForm = false; Mode = NetMode.Choose; });
         ListenCommand = new RelayCommand(Listen, () => !IsActive);
-        ConnectCommand = new RelayCommand(Connect, () => !IsActive && !string.IsNullOrWhiteSpace(RemoteHost) && !string.IsNullOrWhiteSpace(ControllerPin));
-        ConnectRecentCommand = new RelayCommand<RecentConnection>(ConnectRecent, r => r is not null && !IsActive);
-        PickDiscoveredCommand = new RelayCommand<DiscoveredItem>(PickDiscovered, d => d is not null && !IsActive);
+        // These may run while already connected — the controller is a hub and can
+        // add more receivers.
+        ConnectCommand = new RelayCommand(Connect, () => !string.IsNullOrWhiteSpace(RemoteHost) && !string.IsNullOrWhiteSpace(ControllerPin));
+        ConnectRecentCommand = new RelayCommand<RecentConnection>(ConnectRecent, r => r is not null);
+        PickDiscoveredCommand = new RelayCommand<DiscoveredItem>(PickDiscovered, d => d is not null);
         ShowNewFormCommand = new RelayCommand(() => { ShowAdvanced = false; ShowNewForm = true; });
         CloseSheetCommand = new RelayCommand(() => ShowNewForm = false);
         ToggleAdvancedCommand = new RelayCommand(() => ShowAdvanced = !ShowAdvanced);
@@ -93,6 +95,10 @@ public sealed class NetworkViewModel : ObservableObject
     public bool Scanning => _discovery is not null && Discovered.Count == 0;
 
     private DiscoveryListener? _discovery;
+
+    /// <summary>Receivers currently connected (controller hub can hold several).</summary>
+    public ObservableCollection<string> ConnectedPeers { get; } = new();
+    public bool HasPeers => ConnectedPeers.Count > 0;
 
     // ── Choose page (B3 toggle) ───────────────────────────────────────────────
     private bool _isControllerSelected = true;
@@ -188,7 +194,9 @@ public sealed class NetworkViewModel : ObservableObject
             Application.Current?.Dispatcher.BeginInvoke(() => { if (vm.IsActive) vm.Status = msg; });
         }) { IsBackground = true, Name = "Snapfield.Firewall" }.Start();
 
-        StartSession(s => s.Listen(Port));
+        EnsureSession();
+        _session!.Listen(Port);
+        IsActive = true;
         SettingsStore.Save(SettingsStore.Load() with { LastRole = "Receiver", LastPort = Port });
     }
 
@@ -196,11 +204,13 @@ public sealed class NetworkViewModel : ObservableObject
     {
         var host = RemoteHost.Trim();
         var pin = ControllerPin.Trim();
-        ShowNewForm = false; // close the sheet as we connect
-        StopDiscovery();      // no need to keep scanning once connecting
-        StartSession(s => s.Connect(host, Port));
+        if (host.Length == 0 || pin.Length == 0) return;
+        ShowNewForm = false;              // close the sheet
+        EnsureSession();
+        _session!.Connect(host, Port, pin); // adds a peer (hub can hold several)
+        IsActive = true;
         SettingsStore.Save(SettingsStore.Load() with { LastRole = "Controller", LastHost = host, LastPort = Port, ControllerPin = pin });
-        Remember(host, Port, pin, host); // name refined once the peer says hello
+        Remember(host, Port, pin, host);
     }
 
     private void ConnectRecent(RecentConnection? r)
@@ -289,21 +299,15 @@ public sealed class NetworkViewModel : ObservableObject
         }
     }
 
-    private void StartSession(Action<NetworkSession> begin)
+    private void EnsureSession()
     {
+        if (_session is not null) return;
         var monitors = new MonitorEnumerator().Enumerate();
-        _session = new NetworkSession(_machineId, monitors)
-        {
-            Sensitivity = Sensitivity,
-            ReceiverPin = ReceiverPin,
-            ControllerPin = ControllerPin.Trim(),
-        };
+        _session = new NetworkSession(_machineId, monitors) { Sensitivity = Sensitivity, ReceiverPin = ReceiverPin };
         _session.Status += OnStatus;
         _session.EngineStatus += OnEngineStatus;
-        _session.ControllerReady += OnControllerReady;
         _session.ReceiverActivity += OnReceiverActivity;
-        begin(_session);
-        IsActive = true;
+        _session.PeersChanged += OnPeersChanged;
         if (monitors.Count == 0)
             Status = "경고: 이 PC의 모니터를 하나도 인식하지 못했습니다!";
     }
@@ -314,11 +318,12 @@ public sealed class NetworkViewModel : ObservableObject
         _session = null;
         IsActive = false;
         IsBeingControlled = false;
+        ConnectedPeers.Clear();
+        OnPropertyChanged(nameof(HasPeers));
         Status = "";
         Side = "—";
         Detail = "";
         SideBrush = Brushes.Gray;
-        // Back to controller idle → resume scanning for receivers.
         if (Mode == NetMode.Controller) StartDiscovery();
     }
 
@@ -328,25 +333,20 @@ public sealed class NetworkViewModel : ObservableObject
     private void OnStatus(string s) =>
         Application.Current?.Dispatcher.BeginInvoke(() => Status = s);
 
-    private int _remoteCount;
-
-    private void OnControllerReady(int remoteCount) =>
+    private void OnPeersChanged(IReadOnlyList<string> names) =>
         Application.Current?.Dispatcher.BeginInvoke(() =>
         {
-            _remoteCount = remoteCount;
-            // Refine the recent entry's name now that the peer identified itself.
-            if (_session is { RemoteMachineId.Length: > 0 } && !string.IsNullOrWhiteSpace(RemoteHost))
-                Remember(RemoteHost.Trim(), Port, ControllerPin.Trim(), _session.RemoteMachineId);
-            if (remoteCount == 0)
-                Status = "경고: 상대 PC가 모니터 0개를 보냈습니다 — 상대 Snapfield가 최신인지 확인하세요.";
+            ConnectedPeers.Clear();
+            foreach (var n in names) ConnectedPeers.Add(n);
+            OnPropertyChanged(nameof(HasPeers));
         });
 
     private void OnEngineStatus(EngineStatus s) =>
         Application.Current?.Dispatcher.BeginInvoke(() =>
         {
             var remote = s.Captured || s.ActiveIsRemote;
-            Side = remote ? "상대 PC 조작 중" : "이 PC (대기)";
-            Detail = $"{s.ActiveMonitor}   ({s.VirtualXMm:0}, {s.VirtualYMm:0} mm)   ·   상대 모니터 {_remoteCount}개";
+            Side = remote ? $"{s.ActiveMonitor} 조작 중" : "이 PC (대기)";
+            Detail = $"연결된 기기 {ConnectedPeers.Count}대   ·   ({s.VirtualXMm:0}, {s.VirtualYMm:0} mm)";
             SideBrush = remote
                 ? new SolidColorBrush(Color.FromRgb(0xE0, 0x8A, 0x2A))
                 : new SolidColorBrush(Color.FromRgb(0x3B, 0x77, 0xE8));

@@ -57,6 +57,23 @@ public class CursorRouterTests
     }
 
     [Fact]
+    public void FastFlick_OffRemoteBand_StillCrosses()
+    {
+        // Remote spans physical Y 18.65..317.55. A fast flick pins the cursor at the
+        // top-right corner (physical Y ~1.5 mm) — above the remote's band. The old
+        // point-probe missed here ("stuck until you slow down"); the edge scan now
+        // crosses and clamps entry to the remote's top.
+        var r = Router();
+        r.SeatLocal(1920, 1080);
+
+        var result = r.OnLocalAbsolute(3839, 8); // top-right edge
+
+        Assert.Equal(RouteTransition.ToRemote, result.Transition);
+        Assert.Equal("B", result.Owner!.MachineId);
+        Assert.True(result.PixelY >= 0 && result.PixelY < 40); // clamped near the remote's top
+    }
+
+    [Fact]
     public void MiddleOfScreen_DoesNotHandOff()
     {
         var r = Router();

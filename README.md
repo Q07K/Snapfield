@@ -1,4 +1,8 @@
-# Snapfield
+<p align="center">
+  <img src="src/Snapfield.App/Assets/snapfield.png" alt="Snapfield 아이콘" width="120" height="120">
+</p>
+
+<h1 align="center">Snapfield</h1>
 
 Windows 전용 멀티-PC / 멀티-모니터 커서·키보드 공유 툴.
 **Mouse Without Borders**(네트워크 너머 PC 공유)와 **LittleBigMouse**(물리 좌표 기반 정밀 배치)를 결합한다.

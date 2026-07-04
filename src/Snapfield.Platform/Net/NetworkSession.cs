@@ -28,7 +28,8 @@ public sealed class NetworkSession : IDisposable
 
     private readonly string _localMachineId;
     private readonly IReadOnlyList<MonitorInfo> _localMonitors;
-    private readonly object _lock = new();
+    private readonly object _lock = new();       // guards _conns
+    private readonly object _engineLock = new(); // serializes engine + clipboard creation
     private readonly List<Conn> _conns = new();
     private volatile bool _disposed;
 
@@ -177,25 +178,30 @@ public sealed class NetworkSession : IDisposable
 
         var saved = LayoutStore.Load(LayoutStore.DefaultPath);
         var combined = new DesktopLayout(PhysicalLayoutBuilder.Calibrated(_localMonitors, remote, saved));
+
+        // Serialize so two peers connecting at once can't each create an engine
+        // (which would install duplicate global hooks and thrash all input).
+        lock (_engineLock)
+        {
+            if (_engine is null)
+            {
+                _engine = new InputEngine(_localMachineId, combined) { Sensitivity = _sensitivity };
+                _engine.RemoteCursor += (mid, x, y) => { _activeRemote = mid; LinkFor(mid)?.Send(NetMessage.Cursor(x, y)); };
+                _engine.RemoteButton += (b, down) => LinkFor(_activeRemote)?.Send(NetMessage.MouseBtn(b, down));
+                _engine.RemoteWheel += (d, h) => LinkFor(_activeRemote)?.Send(NetMessage.Wheel(d, h));
+                _engine.RemoteKey += (vk, sc, down, ext) => LinkFor(_activeRemote)?.Send(NetMessage.KeyEvent(vk, sc, down, ext));
+                _engine.ControlEnteredRemote += mid => { _activeRemote = mid; LinkFor(mid)?.Send(NetMessage.Enter()); };
+                _engine.ControlReturnedLocal += () => { LinkFor(_activeRemote)?.Send(NetMessage.Leave()); _activeRemote = null; };
+                _engine.StatusChanged += s => EngineStatus?.Invoke(s);
+                _engine.Start();
+            }
+            else
+            {
+                _engine.UpdateLayout(combined);
+            }
+        }
+
         PersistPlane(combined, saved);
-
-        if (_engine is null)
-        {
-            _engine = new InputEngine(_localMachineId, combined) { Sensitivity = _sensitivity };
-            _engine.RemoteCursor += (mid, x, y) => { _activeRemote = mid; LinkFor(mid)?.Send(NetMessage.Cursor(x, y)); };
-            _engine.RemoteButton += (b, down) => LinkFor(_activeRemote)?.Send(NetMessage.MouseBtn(b, down));
-            _engine.RemoteWheel += (d, h) => LinkFor(_activeRemote)?.Send(NetMessage.Wheel(d, h));
-            _engine.RemoteKey += (vk, sc, down, ext) => LinkFor(_activeRemote)?.Send(NetMessage.KeyEvent(vk, sc, down, ext));
-            _engine.ControlEnteredRemote += mid => { _activeRemote = mid; LinkFor(mid)?.Send(NetMessage.Enter()); };
-            _engine.ControlReturnedLocal += () => { LinkFor(_activeRemote)?.Send(NetMessage.Leave()); _activeRemote = null; };
-            _engine.StatusChanged += s => EngineStatus?.Invoke(s);
-            _engine.Start();
-        }
-        else
-        {
-            _engine.UpdateLayout(combined);
-        }
-
         Broadcast(NetMessage.LayoutSync(combined.Monitors.Select(MonitorState.From).ToArray()));
     }
 
@@ -226,19 +232,22 @@ public sealed class NetworkSession : IDisposable
         List<MonitorInfo> remote;
         lock (_lock) remote = _conns.SelectMany(x => x.Monitors).ToList();
         var combined = PhysicalLayoutBuilder.Calibrated(_localMonitors, remote, LayoutStore.Load(LayoutStore.DefaultPath));
-        _engine.UpdateLayout(new DesktopLayout(combined));
+        lock (_engineLock) _engine?.UpdateLayout(new DesktopLayout(combined));
         Broadcast(NetMessage.LayoutSync(combined.Select(MonitorState.From).ToArray()));
     }
 
     // ── clipboard (both roles) ────────────────────────────────────────────────
     private void EnsureClipboard()
     {
-        if (_clipboard is not null) return;
-        _clipboard = new ClipboardMonitor();
+        lock (_engineLock)
+        {
+            if (_clipboard is not null) return;
+            _clipboard = new ClipboardMonitor();
         _clipboard.TextChanged += text => { if (text != _lastAppliedClipboard) Broadcast(NetMessage.ClipboardText(text)); };
         _clipboard.ImageChanged += png => Broadcast(NetMessage.ClipboardPng(png));
         _clipboard.FilesChanged += paths => SendFiles(paths);
         _clipboard.Start();
+        }
     }
 
     private void SendFiles(string[] paths)

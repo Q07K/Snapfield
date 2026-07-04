@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
@@ -16,18 +17,26 @@ namespace Snapfield.Platform.Net;
 /// it — fails the handshake, so the code both pairs AND protects the channel.
 /// Every message after that is encrypted and integrity-checked; a monotonic
 /// counter per direction prevents replay.
+///
+/// Sends are queued and written by a dedicated thread so callers (the low-level
+/// input-hook threads among them) never block on the network. <see cref="Disconnected"/>
+/// fires at most once per link, whichever side (reader, writer, connector) failed first.
 /// </summary>
 public sealed class PeerLink : IDisposable
 {
+    // ~8s of cursor moves at 125 Hz. A full queue means the peer stopped
+    // draining (hung app / dead network) — drop the link rather than block.
+    private const int SendQueueCapacity = 1024;
+
     private TcpListener? _listener;
     private TcpClient? _client;
     private NetworkStream? _stream;
-    private Thread? _reader;
-    private readonly object _writeLock = new();
+    private BlockingCollection<NetMessage>? _sendQueue;
     private volatile bool _closed;
+    private int _downFired;
 
     private AesGcm? _send, _recv;
-    private ulong _sendCtr, _recvCtr;
+    private ulong _sendCtr, _recvCtr; // _sendCtr: writer thread only; _recvCtr: reader thread only
 
     public event Action? Connected;
     public event Action<NetMessage>? MessageReceived;
@@ -37,11 +46,16 @@ public sealed class PeerLink : IDisposable
 
     public void Listen(int port, string pin)
     {
-        _listener = new TcpListener(IPAddress.Any, port);
-        _listener.Start();
+        // Bind on the worker thread: a port squatted by another process must
+        // surface as Disconnected (and be retried), not throw at the caller.
         StartThread("Snapfield.Listen", () =>
         {
-            var c = _listener.AcceptTcpClient();
+            if (_closed) return;
+            var listener = new TcpListener(IPAddress.Any, port);
+            _listener = listener;
+            listener.Start();
+            if (_closed) { listener.Stop(); return; } // disposed while binding
+            var c = listener.AcceptTcpClient();
             Attach(c, initiator: false, pin);
         });
     }
@@ -61,20 +75,21 @@ public sealed class PeerLink : IDisposable
         var t = new Thread(() =>
         {
             try { body(); }
-            catch (Exception ex) { if (!_closed) Disconnected?.Invoke(ex.Message); }
+            catch (Exception ex) { FireDisconnected(ex.Message); }
         }) { IsBackground = true, Name = name };
         t.Start();
     }
 
     private void Attach(TcpClient client, bool initiator, string pin)
     {
+        if (_closed) { try { client.Close(); } catch { } return; }
         _client = client;
         _client.NoDelay = true;
         EnableTcpKeepAlive(_client.Client);
         _stream = _client.GetStream();
 
-        _reader = new Thread(() => Run(initiator, pin)) { IsBackground = true, Name = "Snapfield.Reader" };
-        _reader.Start();
+        var reader = new Thread(() => Run(initiator, pin)) { IsBackground = true, Name = "Snapfield.Reader" };
+        reader.Start();
     }
 
     private void Run(bool initiator, string pin)
@@ -85,15 +100,18 @@ public sealed class PeerLink : IDisposable
         }
         catch (AuthenticationFailure)
         {
-            if (!_closed) Disconnected?.Invoke("AUTH: 연결 코드가 일치하지 않습니다.");
+            FireDisconnected("AUTH: 연결 코드가 일치하지 않습니다.");
             return;
         }
         catch (Exception ex)
         {
-            if (!_closed) Disconnected?.Invoke(ex.Message);
+            FireDisconnected(ex.Message);
             return;
         }
 
+        var queue = new BlockingCollection<NetMessage>(SendQueueCapacity);
+        _sendQueue = queue;
+        StartThread("Snapfield.Writer", () => WriteLoop(queue));
         Connected?.Invoke();
         ReadLoop();
     }
@@ -140,26 +158,38 @@ public sealed class PeerLink : IDisposable
     // ── encrypted messaging ─────────────────────────────────────────────────
     public void Send(NetMessage message)
     {
-        var gcm = _send;
-        var stream = _stream;
-        if (gcm is null || stream is null || _closed) return;
-
-        var plain = message.ToJson();
-        var ct = new byte[plain.Length];
-        var tag = new byte[16];
-        ulong ctr;
-        lock (_writeLock)
+        var queue = _sendQueue;
+        if (queue is null || _closed) return;
+        try
         {
-            ctr = _sendCtr++;
-            gcm.Encrypt(NonceFor(ctr), plain, ct, tag);
-            var frame = new byte[4 + 8 + 16 + ct.Length];
-            BinaryPrimitives.WriteInt32LittleEndian(frame, 8 + 16 + ct.Length);
-            BinaryPrimitives.WriteUInt64BigEndian(frame.AsSpan(4), ctr);
-            tag.CopyTo(frame, 12);
-            ct.CopyTo(frame, 28);
-            try { stream.Write(frame, 0, frame.Length); stream.Flush(); }
-            catch (Exception ex) { if (!_closed) Disconnected?.Invoke(ex.Message); }
+            if (!queue.TryAdd(message))
+                FireDisconnected("송신 적체 — 상대 기기가 응답하지 않습니다.");
         }
+        catch (InvalidOperationException) { /* queue completed during shutdown */ }
+    }
+
+    private void WriteLoop(BlockingCollection<NetMessage> queue)
+    {
+        var stream = _stream!;
+        var gcm = _send!;
+        try
+        {
+            foreach (var message in queue.GetConsumingEnumerable())
+            {
+                var plain = message.ToJson();
+                var ct = new byte[plain.Length];
+                var tag = new byte[16];
+                var ctr = _sendCtr++;
+                gcm.Encrypt(NonceFor(ctr), plain, ct, tag);
+                var frame = new byte[4 + 8 + 16 + ct.Length];
+                BinaryPrimitives.WriteInt32LittleEndian(frame, 8 + 16 + ct.Length);
+                BinaryPrimitives.WriteUInt64BigEndian(frame.AsSpan(4), ctr);
+                tag.CopyTo(frame, 12);
+                ct.CopyTo(frame, 28);
+                stream.Write(frame, 0, frame.Length);
+            }
+        }
+        catch (Exception ex) { FireDisconnected(ex.Message); }
     }
 
     private void ReadLoop()
@@ -188,8 +218,14 @@ public sealed class PeerLink : IDisposable
                 if (msg is not null) MessageReceived?.Invoke(msg);
             }
         }
-        catch (Exception ex) { if (!_closed) Disconnected?.Invoke(ex.Message); return; }
-        if (!_closed) Disconnected?.Invoke("peer closed the connection");
+        catch (Exception ex) { FireDisconnected(ex.Message); return; }
+        FireDisconnected("peer closed the connection");
+    }
+
+    private void FireDisconnected(string reason)
+    {
+        if (_closed) return;
+        if (Interlocked.Exchange(ref _downFired, 1) == 0) Disconnected?.Invoke(reason);
     }
 
     private static byte[] NonceFor(ulong counter)
@@ -199,13 +235,15 @@ public sealed class PeerLink : IDisposable
         return n;
     }
 
-    // ── raw framed I/O for the plaintext handshake ───────────────────────────
+    // ── raw framed I/O for the plaintext handshake (single-threaded) ─────────
     private void WritePlain(byte[] payload)
     {
         var s = _stream!;
         var head = new byte[4];
         BinaryPrimitives.WriteInt32LittleEndian(head, payload.Length);
-        lock (_writeLock) { s.Write(head, 0, 4); s.Write(payload, 0, payload.Length); s.Flush(); }
+        s.Write(head, 0, 4);
+        s.Write(payload, 0, payload.Length);
+        s.Flush();
     }
 
     private byte[] ReadPlain()
@@ -263,6 +301,7 @@ public sealed class PeerLink : IDisposable
     public void Dispose()
     {
         _closed = true;
+        try { _sendQueue?.CompleteAdding(); } catch { }
         try { _stream?.Close(); } catch { }
         try { _client?.Close(); } catch { }
         try { _listener?.Stop(); } catch { }

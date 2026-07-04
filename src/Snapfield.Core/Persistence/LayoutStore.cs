@@ -70,12 +70,29 @@ public static class LayoutStore
     /// session re-route against the newly calibrated plane immediately.</summary>
     public static event Action? Saved;
 
+    // The UI thread (calibration) and network reader threads (receiver applying
+    // the controller's plane) both save — serialize the writes.
+    private static readonly object WriteGate = new();
+
+    /// <summary>Best-effort save: never throws (a disk hiccup must not crash the
+    /// caller), never leaves a half-written file, raises <see cref="Saved"/> only
+    /// when the file actually changed on disk.</summary>
     public static void Save(string path, DesktopLayout layout)
     {
-        var dir = Path.GetDirectoryName(path);
-        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
         var states = layout.Monitors.Select(MonitorState.From).ToList();
-        File.WriteAllText(path, JsonSerializer.Serialize(states, Options));
+        var json = JsonSerializer.Serialize(states, Options);
+        try
+        {
+            lock (WriteGate)
+            {
+                var dir = Path.GetDirectoryName(path);
+                if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+                var tmp = path + ".tmp";
+                File.WriteAllText(tmp, json);
+                File.Move(tmp, path, overwrite: true);
+            }
+        }
+        catch { return; }
         Saved?.Invoke();
     }
 

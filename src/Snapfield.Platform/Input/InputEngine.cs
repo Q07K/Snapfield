@@ -34,9 +34,19 @@ public sealed class InputEngine : IDisposable
     private readonly LowLevelMouseHook _hook;
     private readonly LowLevelKeyboardHook _kbHook;
 
-    private double _mmPerPx = 0.25;      // fallback ~96 DPI; recomputed from layout
-    private (int X, int Y) _center;      // local parking point during capture
-    private bool _captured;
+    // The router and capture state are touched by three threads: the mouse-hook
+    // thread (moves), the keyboard-hook thread (panic release), and network
+    // reader threads (layout updates on peer join/leave). One small lock keeps
+    // them consistent — every guarded section is pure in-memory work, so hook
+    // callbacks stay fast.
+    private readonly object _sync = new();
+
+    /// <summary>Local pixel→mm scale and the parking point, swapped atomically as
+    /// one immutable snapshot so hook threads never see a half-updated pair.</summary>
+    private sealed record LocalMetrics(double MmPerPx, int CenterX, int CenterY);
+    private LocalMetrics _metrics = new(0.25, 0, 0); // fallback ~96 DPI; recomputed from layout
+
+    private volatile bool _captured;
     private int _lastStatusTick;
 
     /// <summary>Cursor speed multiplier while traversing remote screens.</summary>
@@ -46,6 +56,10 @@ public sealed class InputEngine : IDisposable
     public bool HideCursorWhileCaptured { get; set; } = true;
 
     public event Action<EngineStatus>? StatusChanged;
+
+    /// <summary>Non-fatal engine failures the UI should surface (e.g. a global
+    /// hook could not be installed).</summary>
+    public event Action<string>? Fault;
 
     // Raised while control is on a remote monitor, for the network layer to forward.
     public event Action<string, int, int>? RemoteCursor;   // (remoteMachineId, x, y)
@@ -61,6 +75,8 @@ public sealed class InputEngine : IDisposable
         _router = new CursorRouter(localMachineId, layout);
         _hook = new LowLevelMouseHook(OnMouseEvent);
         _kbHook = new LowLevelKeyboardHook(OnKeyEvent);
+        _hook.Failed += m => Fault?.Invoke("마우스 훅 설치 실패 — 원격 조작이 동작하지 않습니다: " + m);
+        _kbHook.Failed += m => Fault?.Invoke("키보드 훅 설치 실패 — 원격 키 입력이 동작하지 않습니다: " + m);
         RecomputeFromLayout(layout);
     }
 
@@ -68,27 +84,33 @@ public sealed class InputEngine : IDisposable
 
     public void UpdateLayout(DesktopLayout layout)
     {
-        _router.UpdateLayout(layout);
-        RecomputeFromLayout(layout);
+        lock (_sync)
+        {
+            _router.UpdateLayout(layout);
+            RecomputeFromLayout(layout);
+        }
     }
 
     private void RecomputeFromLayout(DesktopLayout layout)
     {
         var local = layout.Monitors.FirstOrDefault(m => m.MachineId == _localMachineId);
-        if (local is not null)
-        {
-            if (local.PixelsPerMmX > 0) _mmPerPx = 1.0 / local.PixelsPerMmX;
-            _center = (local.PixelBounds.Left + local.PixelBounds.Width / 2,
-                       local.PixelBounds.Top + local.PixelBounds.Height / 2);
-        }
+        if (local is null) return;
+        var mmPerPx = local.PixelsPerMmX > 0 ? 1.0 / local.PixelsPerMmX : _metrics.MmPerPx;
+        _metrics = new LocalMetrics(
+            mmPerPx,
+            local.PixelBounds.Left + local.PixelBounds.Width / 2,
+            local.PixelBounds.Top + local.PixelBounds.Height / 2);
     }
 
     public void Start()
     {
         if (IsRunning) return;
         var (x, y) = CursorInjector.GetPosition();
-        _router.SeatLocal(x, y);
-        _captured = false;
+        lock (_sync)
+        {
+            _router.SeatLocal(x, y);
+            _captured = false;
+        }
         _hook.Start();
         _kbHook.Start();
         IsRunning = true;
@@ -140,10 +162,17 @@ public sealed class InputEngine : IDisposable
     private void ForceReleaseToLocal()
     {
         if (!_captured) return;
-        _captured = false;
+        int cx, cy;
+        lock (_sync)
+        {
+            if (!_captured) return; // lost the race to a normal ToLocal transition
+            _captured = false;
+            var m = _metrics;
+            cx = m.CenterX; cy = m.CenterY;
+            _router.SeatLocal(cx, cy);
+        }
         CursorHider.Show();
-        CursorInjector.WarpTo(_center.X, _center.Y);
-        _router.SeatLocal(_center.X, _center.Y);
+        CursorInjector.WarpTo(cx, cy);
         ControlReturnedLocal?.Invoke();
         RaiseStatus(force: true);
     }
@@ -168,50 +197,56 @@ public sealed class InputEngine : IDisposable
 
     private bool OnMove(int x, int y)
     {
-        if (!_captured)
+        lock (_sync)
         {
-            var res = _router.OnLocalAbsolute(x, y);
-            if (res.Transition == RouteTransition.ToRemote)
+            if (!_captured)
             {
-                EnterCapture(res);
-                return true; // stop this move; cursor is now parked
+                var res = _router.OnLocalAbsolute(x, y);
+                if (res.Transition == RouteTransition.ToRemote)
+                {
+                    EnterCapture(res);
+                    return true; // stop this move; cursor is now parked
+                }
+                return false; // normal local movement
             }
-            return false; // normal local movement
-        }
 
-        // Captured: convert the delta from the parked centre into physical mm.
-        var dxMm = (x - _center.X) * _mmPerPx * Sensitivity;
-        var dyMm = (y - _center.Y) * _mmPerPx * Sensitivity;
-        var result = _router.OnDelta(dxMm, dyMm);
+            // Captured: convert the delta from the parked centre into physical mm.
+            var m = _metrics;
+            var dxMm = (x - m.CenterX) * m.MmPerPx * Sensitivity;
+            var dyMm = (y - m.CenterY) * m.MmPerPx * Sensitivity;
+            var result = _router.OnDelta(dxMm, dyMm);
 
-        if (result.Transition == RouteTransition.ToLocal)
-        {
-            _captured = false;
-            CursorHider.Show();
-            var (px, py) = result.PixelInt;
-            CursorInjector.WarpTo(px, py);
-            ControlReturnedLocal?.Invoke();
-            RaiseStatus(force: true);
+            if (result.Transition == RouteTransition.ToLocal)
+            {
+                _captured = false;
+                CursorHider.Show();
+                var (px, py) = result.PixelInt;
+                CursorInjector.WarpTo(px, py);
+                ControlReturnedLocal?.Invoke();
+                RaiseStatus(force: true);
+                return true;
+            }
+
+            // Still remote: stream the position to the remote, then reset the parking
+            // point so we always have movement headroom locally.
+            if (result.Owner is not null)
+            {
+                var (px, py) = result.PixelInt;
+                RemoteCursor?.Invoke(result.Owner.MachineId, px, py);
+            }
+            CursorInjector.WarpTo(m.CenterX, m.CenterY);
+            RaiseStatus(force: false);
             return true;
         }
-
-        // Still remote: stream the position to the remote, then reset the parking
-        // point so we always have movement headroom locally.
-        if (result.Owner is not null)
-        {
-            var (px, py) = result.PixelInt;
-            RemoteCursor?.Invoke(result.Owner.MachineId, px, py);
-        }
-        CursorInjector.WarpTo(_center.X, _center.Y);
-        RaiseStatus(force: false);
-        return true;
     }
 
+    // Called with _sync held (from OnMove).
     private void EnterCapture(Snapfield.Core.Input.RouteResult res)
     {
         _captured = true;
         if (HideCursorWhileCaptured) CursorHider.Hide();
-        CursorInjector.WarpTo(_center.X, _center.Y);
+        var m = _metrics;
+        CursorInjector.WarpTo(m.CenterX, m.CenterY);
         if (res.Owner is not null)
         {
             ControlEnteredRemote?.Invoke(res.Owner.MachineId);

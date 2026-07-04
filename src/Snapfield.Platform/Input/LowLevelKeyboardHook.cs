@@ -21,6 +21,9 @@ public sealed class LowLevelKeyboardHook : IDisposable
 
     public LowLevelKeyboardHook(Func<KeyHookEvent, bool> handler) => _handler = handler;
 
+    /// <summary>The hook could not be installed (raised on the hook thread).</summary>
+    public event Action<string>? Failed;
+
     public void Start()
     {
         if (_thread is not null) return;
@@ -34,7 +37,12 @@ public sealed class LowLevelKeyboardHook : IDisposable
         _proc = HookCallback;
         _hook = SetWindowsHookEx(WH_KEYBOARD_LL, _proc, GetModuleHandle(null), 0);
         if (_hook == IntPtr.Zero)
-            throw new InvalidOperationException($"SetWindowsHookEx(WH_KEYBOARD_LL) failed (error {Marshal.GetLastWin32Error()}).");
+        {
+            // Never throw here: an unhandled exception on this background
+            // thread would terminate the whole process.
+            Failed?.Invoke($"SetWindowsHookEx(WH_KEYBOARD_LL) failed (error {Marshal.GetLastWin32Error()}).");
+            return;
+        }
 
         while (GetMessage(out var msg, IntPtr.Zero, 0, 0) > 0)
         {

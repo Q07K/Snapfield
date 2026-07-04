@@ -23,6 +23,9 @@ public sealed class LowLevelMouseHook : IDisposable
 
     public LowLevelMouseHook(Func<MouseHookEvent, bool> handler) => _handler = handler;
 
+    /// <summary>The hook could not be installed (raised on the hook thread).</summary>
+    public event Action<string>? Failed;
+
     public void Start()
     {
         if (_thread is not null) return;
@@ -36,7 +39,12 @@ public sealed class LowLevelMouseHook : IDisposable
         _proc = HookCallback;
         _hook = SetWindowsHookEx(WH_MOUSE_LL, _proc, GetModuleHandle(null), 0);
         if (_hook == IntPtr.Zero)
-            throw new InvalidOperationException($"SetWindowsHookEx failed (error {Marshal.GetLastWin32Error()}).");
+        {
+            // Never throw here: an unhandled exception on this background
+            // thread would terminate the whole process.
+            Failed?.Invoke($"SetWindowsHookEx(WH_MOUSE_LL) failed (error {Marshal.GetLastWin32Error()}).");
+            return;
+        }
 
         // Pump messages so the hook stays alive; exits when WM_QUIT is posted.
         while (GetMessage(out var msg, IntPtr.Zero, 0, 0) > 0)

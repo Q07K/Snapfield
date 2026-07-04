@@ -122,14 +122,22 @@ public sealed class NetworkSession : IDisposable
                 }
                 break;
 
-            // Receiver-side injection.
+            // Receiver-side injection. Role-gated: a receiver must never be able
+            // to drive the controller's own input over the same channel.
             case MsgType.CursorMove:
+                if (Role != PeerRole.Receiver) break;
                 CursorInjector.WarpTo(msg.X, msg.Y);
                 ReceiverActivity?.Invoke(++_rxCount, msg.X, msg.Y);
                 break;
-            case MsgType.MouseButton: CursorInjector.MouseButton(msg.Button, msg.Down); break;
-            case MsgType.MouseWheel: CursorInjector.Wheel(msg.WheelDelta, msg.Horizontal); break;
-            case MsgType.Key: CursorInjector.KeyEvent(msg.Vk, msg.Scan, msg.Down, msg.Extended); break;
+            case MsgType.MouseButton:
+                if (Role == PeerRole.Receiver) CursorInjector.MouseButton(msg.Button, msg.Down);
+                break;
+            case MsgType.MouseWheel:
+                if (Role == PeerRole.Receiver) CursorInjector.Wheel(msg.WheelDelta, msg.Horizontal);
+                break;
+            case MsgType.Key:
+                if (Role == PeerRole.Receiver) CursorInjector.KeyEvent(msg.Vk, msg.Scan, msg.Down, msg.Extended);
+                break;
             case MsgType.ControlEnter: Status?.Invoke("조작 기기가 이 화면을 넘겨받았습니다."); break;
             case MsgType.ControlLeave: Status?.Invoke("조작 기기가 이 화면을 떠났습니다."); break;
             case MsgType.Clipboard:
@@ -162,9 +170,21 @@ public sealed class NetworkSession : IDisposable
 
         if (reason.StartsWith("AUTH:", StringComparison.Ordinal))
         {
-            Status?.Invoke(reason["AUTH:".Length..].Trim() + " 코드를 확인하고 다시 연결하세요.");
-            lock (_lock) _conns.Remove(c);
-            RaisePeers();
+            var text = reason["AUTH:".Length..].Trim();
+            if (Role == PeerRole.Receiver)
+            {
+                // A stranger's (or mistyped) wrong code must not kill the
+                // listener — keep waiting for the controller that knows it.
+                Status?.Invoke(text + " 계속 대기합니다.");
+                c.ScheduleReconnect(RelistenDelayMs);
+            }
+            else
+            {
+                Status?.Invoke(text + " 코드를 확인하고 다시 연결하세요.");
+                lock (_lock) _conns.Remove(c);
+                c.Stop(); // release the socket — a removed conn never retries
+                RaisePeers();
+            }
             return;
         }
 
@@ -196,6 +216,7 @@ public sealed class NetworkSession : IDisposable
                 _engine.ControlEnteredRemote += mid => { _activeRemote = mid; LinkFor(mid)?.Send(NetMessage.Enter()); };
                 _engine.ControlReturnedLocal += () => { LinkFor(_activeRemote)?.Send(NetMessage.Leave()); _activeRemote = null; };
                 _engine.StatusChanged += s => EngineStatus?.Invoke(s);
+                _engine.Fault += m => Status?.Invoke(m);
                 _engine.Start();
             }
             else
@@ -343,7 +364,7 @@ public sealed class NetworkSession : IDisposable
 
         public void Start()
         {
-            var gen = ++_gen;
+            var gen = Interlocked.Increment(ref _gen);
             var link = new PeerLink();
             Link = link;
             link.Connected += () => { if (Current(gen)) _s.OnConnected(this); };
@@ -371,7 +392,7 @@ public sealed class NetworkSession : IDisposable
         public void Stop()
         {
             _stopped = true;
-            _gen++;
+            Interlocked.Increment(ref _gen);
             try { Link?.Dispose(); } catch { }
         }
     }

@@ -104,6 +104,7 @@ public sealed class NetworkSession : IDisposable
         {
             case MsgType.Hello:
                 c.MachineId = msg.MachineId ?? "remote";
+                c.IsUp = true;
                 c.Monitors = (msg.Monitors ?? Array.Empty<MonitorState>()).Select(s => s.ToMonitorInfo()).ToList();
                 if (Role == PeerRole.Controller)
                 {
@@ -116,6 +117,7 @@ public sealed class NetworkSession : IDisposable
                 {
                     c.Link!.Send(NetMessage.Hello(_localMachineId, _localMonitors.Select(MonitorState.From).ToArray()));
                     EnsureClipboard();
+                    RaisePeers();
                     Status?.Invoke($"'{c.MachineId}'에 연결됨 (모니터 {c.Monitors.Count}대). 제어 대기 중.");
                 }
                 break;
@@ -149,13 +151,14 @@ public sealed class NetworkSession : IDisposable
 
     private void OnDown(Conn c, string reason)
     {
-        if (Role == PeerRole.Controller)
+        c.IsUp = false;
+
+        if (Role == PeerRole.Controller && c.MachineId.Length > 0)
         {
-            // Drop this peer's monitors and re-plan the plane.
-            var wasKnown = c.MachineId.Length > 0;
-            c.Monitors = new List<MonitorInfo>();
-            if (wasKnown) { RebuildEngine(); RaisePeers(); }
+            c.Monitors = new List<MonitorInfo>(); // drop its monitors from the plane
+            RebuildEngine();
         }
+        RaisePeers(); // reflect the drop (hides its monitors on both ends' canvases)
 
         if (reason.StartsWith("AUTH:", StringComparison.Ordinal))
         {
@@ -218,11 +221,11 @@ public sealed class NetworkSession : IDisposable
         foreach (var c in snapshot) c.Link?.Send(m);
     }
 
-    private int ConnectedCount { get { lock (_lock) return _conns.Count(c => c.MachineId.Length > 0); } }
+    private int ConnectedCount { get { lock (_lock) return _conns.Count(c => c.IsUp && c.MachineId.Length > 0); } }
     private void RaisePeers()
     {
         List<string> names;
-        lock (_lock) names = _conns.Where(c => c.MachineId.Length > 0).Select(c => c.MachineId).ToList();
+        lock (_lock) names = _conns.Where(c => c.IsUp && c.MachineId.Length > 0).Select(c => c.MachineId).ToList();
         PeersChanged?.Invoke(names);
     }
 
@@ -328,6 +331,7 @@ public sealed class NetworkSession : IDisposable
         public readonly int Port;
         public PeerLink? Link;
         public string MachineId = "";
+        public bool IsUp;
         public List<MonitorInfo> Monitors = new();
         private int _gen;
         private volatile bool _stopped;

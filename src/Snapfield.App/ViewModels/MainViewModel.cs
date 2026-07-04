@@ -22,6 +22,11 @@ public sealed class MainViewModel : ObservableObject
         SelectConnectCommand = new RelayCommand(() => Tab = MainTab.Connect);
         SelectCalibrateCommand = new RelayCommand(() => Tab = MainTab.Calibrate);
         SelectSettingsCommand = new RelayCommand(() => Tab = MainTab.Settings);
+
+        // Show a remote's monitors on the calibration plane only while it's connected.
+        Network.ConnectedPeers.CollectionChanged += (_, _) =>
+            Calibration.SetActiveRemotes(Network.ConnectedPeers.ToList());
+        Calibration.SetActiveRemotes(Network.ConnectedPeers.ToList());
     }
 
     public NetworkViewModel Network { get; }

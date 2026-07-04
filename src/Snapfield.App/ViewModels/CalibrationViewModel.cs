@@ -18,6 +18,11 @@ public sealed class CalibrationViewModel : ObservableObject
 
     public ObservableCollection<MonitorViewModel> Monitors { get; } = new();
 
+    private readonly string _local = Environment.MachineName;
+    // Remote machines currently connected. Their monitors show on the plane;
+    // when they disconnect they're hidden (placement stays saved for reconnect).
+    private HashSet<string> _activeRemotes = new();
+
     public ICommand ReDetectCommand { get; }
     public ICommand AutoArrangeCommand { get; }
     public ICommand SaveCommand { get; }
@@ -43,23 +48,18 @@ public sealed class CalibrationViewModel : ObservableObject
     public void ShutDown() => Microsoft.Win32.SystemEvents.DisplaySettingsChanged -= OnDisplaysChanged;
 
     /// <summary>Saves silently (no status message) — used for auto-save after a drag.</summary>
-    public void AutoSave() => LayoutStore.Save(AppPaths.LayoutFile, new DesktopLayout(Monitors.Select(m => m.ToMonitorInfo())));
+    public void AutoSave() => PersistCurrent();
 
     private void OnStoreSaved()
     {
         System.Windows.Application.Current?.Dispatcher.BeginInvoke(() =>
         {
-            var saved = LayoutStore.Load(AppPaths.LayoutFile);
-            if (saved is null) return;
-
-            var detected = new MonitorEnumerator().Enumerate();
-            var merged = LayoutStore.Merge(detected, saved);
-
-            // Reload on ANY change to the plane — a peer joining OR the controller
-            // moving/resizing a monitor (real-time sync). Skip when the file already
-            // matches what's on screen (our own save echo) to avoid needless rebuilds.
-            if (MatchesCurrent(merged)) return;
-            Populate(merged);
+            var display = BuildDisplay();
+            // Reload on ANY change to the plane — a peer joining/leaving OR the
+            // controller moving/resizing. Skip when the file already matches what's
+            // on screen (our own save echo) to avoid needless rebuilds.
+            if (MatchesCurrent(display)) return;
+            Populate(display);
             StatusText = "배치가 업데이트되었습니다.";
         });
     }
@@ -178,24 +178,35 @@ public sealed class CalibrationViewModel : ObservableObject
     }
 
     // ── Data operations ──────────────────────────────────────────────────────
-    private void Load()
+
+    /// <summary>Sets which remote machines are connected; hides the rest and refreshes.</summary>
+    public void SetActiveRemotes(IEnumerable<string> machineIds)
+    {
+        _activeRemotes = machineIds.ToHashSet();
+        System.Windows.Application.Current?.Dispatcher.BeginInvoke(() => Populate(BuildDisplay()));
+    }
+
+    /// <summary>The layout to show: local monitors + connected remotes only.
+    /// Offline remotes stay in the file (placement remembered) but aren't drawn.</summary>
+    private DesktopLayout BuildDisplay()
     {
         var detected = new MonitorEnumerator().Enumerate();
         var saved = LayoutStore.Load(AppPaths.LayoutFile);
-        var layout = LayoutStore.Merge(detected, saved);
-        Populate(layout);
-        StatusText = saved is null
-            ? $"{layout.Monitors.Count} monitor(s) detected — no saved layout, using provisional placement."
-            : $"{layout.Monitors.Count} monitor(s) — restored saved calibration.";
+        var merged = saved is null ? new DesktopLayout(detected) : LayoutStore.Merge(detected, saved);
+        var shown = merged.Monitors.Where(m => m.MachineId == _local || _activeRemotes.Contains(m.MachineId));
+        return new DesktopLayout(shown);
+    }
+
+    private void Load()
+    {
+        Populate(BuildDisplay());
+        StatusText = $"{Monitors.Count}개 화면 — 저장된 배치를 불러왔습니다.";
     }
 
     private void ReDetect()
     {
-        var detected = new MonitorEnumerator().Enumerate();
-        var current = new DesktopLayout(Monitors.Select(m => m.ToMonitorInfo()));
-        var layout = LayoutStore.Merge(detected, current); // keep current placement for known monitors
-        Populate(layout);
-        StatusText = $"Re-detected: {layout.Monitors.Count} monitor(s).";
+        Populate(BuildDisplay());
+        StatusText = $"재감지: {Monitors.Count}개 화면.";
     }
 
     private void AutoArrange()
@@ -209,14 +220,26 @@ public sealed class CalibrationViewModel : ObservableObject
             cursorX += m.WidthMm;
         }
         RecomputeTransform();
-        StatusText = "Auto-arranged left-to-right (top-aligned).";
+        PersistCurrent();
+        StatusText = "자동 정렬 완료 (좌→우, 상단 정렬).";
+    }
+
+    /// <summary>Writes the shown monitors, preserving offline machines already in the
+    /// file (their placement is remembered), except an explicitly removed key.</summary>
+    private void PersistCurrent(string? excludeKey = null)
+    {
+        var shown = Monitors.Select(m => m.ToMonitorInfo()).ToList();
+        var shownKeys = shown.Select(k => k.Key).ToHashSet();
+        var saved = LayoutStore.Load(AppPaths.LayoutFile);
+        var preserved = saved?.Monitors.Where(m => !shownKeys.Contains(m.Key) && m.Key != excludeKey)
+                        ?? Enumerable.Empty<MonitorInfo>();
+        LayoutStore.Save(AppPaths.LayoutFile, new DesktopLayout(shown.Concat(preserved)));
     }
 
     private void Save()
     {
-        var layout = new DesktopLayout(Monitors.Select(m => m.ToMonitorInfo()));
-        LayoutStore.Save(AppPaths.LayoutFile, layout);
-        StatusText = $"Saved to {AppPaths.LayoutFile}";
+        PersistCurrent();
+        StatusText = "배치를 저장했습니다.";
     }
 
     /// <summary>Corrects a monitor's physical size from its true diagonal, deriving
@@ -258,8 +281,8 @@ public sealed class CalibrationViewModel : ObservableObject
         }
         Monitors.Remove(m);
         RecomputeTransform();
-        Save(); // persist immediately so it stays gone on the next load
-        StatusText = $"'{m.MachineId}' 모니터를 평면에서 제거했습니다. 다시 연결하면 다시 나타납니다.";
+        PersistCurrent(excludeKey: $"{m.MachineId}/{m.DeviceId}"); // drop from file too
+        StatusText = $"'{m.MachineId}' 모니터를 평면에서 제거했습니다.";
     }
 
     private void Populate(DesktopLayout layout)

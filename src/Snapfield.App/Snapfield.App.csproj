@@ -15,7 +15,7 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <Version>0.10.1</Version>
+    <Version>0.10.2</Version>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\snapfield.ico</ApplicationIcon>
     <TargetFramework>net8.0-windows</TargetFramework>

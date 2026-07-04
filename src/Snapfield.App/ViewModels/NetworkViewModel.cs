@@ -123,6 +123,7 @@ public sealed class NetworkViewModel : ObservableObject
             OnPropertyChanged(nameof(IsChoosePage));
             OnPropertyChanged(nameof(IsReceiverPage));
             OnPropertyChanged(nameof(IsControllerPage));
+            OnPropertyChanged(nameof(ActingAsReceiver));
             if (value == NetMode.Controller) StartDiscovery(); else StopDiscovery();
         }
     }
@@ -135,9 +136,13 @@ public sealed class NetworkViewModel : ObservableObject
     public bool IsActive
     {
         get => _isActive;
-        private set { if (SetField(ref _isActive, value)) { OnPropertyChanged(nameof(IsIdle)); OnPropertyChanged(nameof(IsWaiting)); } }
+        private set { if (SetField(ref _isActive, value)) { OnPropertyChanged(nameof(IsIdle)); OnPropertyChanged(nameof(IsWaiting)); OnPropertyChanged(nameof(ActingAsReceiver)); } }
     }
     public bool IsIdle => !_isActive;
+
+    /// <summary>This machine is running as a receiver — the controller owns the layout,
+    /// so its calibration plane is read-only (mirrors what the controller sends).</summary>
+    public bool ActingAsReceiver => _isActive && _mode == NetMode.Receiver;
 
     private bool _isBeingControlled;
     public bool IsBeingControlled

@@ -27,6 +27,15 @@ public sealed class MainViewModel : ObservableObject
         Network.ConnectedPeers.CollectionChanged += (_, _) =>
             Calibration.SetActiveRemotes(Network.ConnectedPeers.ToList());
         Calibration.SetActiveRemotes(Network.ConnectedPeers.ToList());
+
+        // The controller owns the layout. On a receiver the plane is read-only —
+        // it just mirrors the plane the controller broadcasts, so all machines agree.
+        Network.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(NetworkViewModel.ActingAsReceiver))
+                Calibration.SetEditable(!Network.ActingAsReceiver);
+        };
+        Calibration.SetEditable(!Network.ActingAsReceiver);
     }
 
     public NetworkViewModel Network { get; }

@@ -41,6 +41,7 @@ public partial class MainWindow : Window
     {
         var el = (FrameworkElement)sender;
         if (el.DataContext is not MonitorViewModel monitor) return;
+        if (!Cal.IsEditable) return; // receiver: layout is controller-owned, read-only
         _dragging = monitor;
         _dragStartCanvas = e.GetPosition(Surface);
         _dragStartXMm = monitor.XMm;

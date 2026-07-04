@@ -294,7 +294,12 @@
                        Visibility="{Binding DataContext.IsCalibrate, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource B2V}}">
                 <Border DockPanel.Dock="Bottom" Background="#13131C" Padding="12,7">
                     <DockPanel LastChildFill="False">
-                        <Button DockPanel.Dock="Left" Content="자동 정렬로 초기화" Command="{Binding AutoArrangeCommand}"/>
+                        <Button DockPanel.Dock="Left" Content="자동 정렬로 초기화" Command="{Binding AutoArrangeCommand}"
+                                Visibility="{Binding IsEditable, Converter={StaticResource B2V}}"/>
+                        <TextBlock DockPanel.Dock="Left" VerticalAlignment="Center" FontSize="11.5"
+                                   Foreground="{StaticResource creamDim}"
+                                   Text="🔒 조작 기기에서 관리하는 배치입니다 (읽기 전용)"
+                                   Visibility="{Binding IsReadOnly, Converter={StaticResource B2V}}"/>
                         <TextBlock DockPanel.Dock="Right" Text="{Binding StatusText}" Foreground="{StaticResource creamDim}"
                                    VerticalAlignment="Center" FontSize="11.5"/>
                     </DockPanel>

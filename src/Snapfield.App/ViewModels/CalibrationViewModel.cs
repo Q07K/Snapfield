@@ -23,6 +23,19 @@ public sealed class CalibrationViewModel : ObservableObject
     // when they disconnect they're hidden (placement stays saved for reconnect).
     private HashSet<string> _activeRemotes = new();
 
+    // The controller owns the layout. On a receiver the plane is read-only (it
+    // just mirrors what the controller sends) to avoid two-way edit conflicts.
+    private bool _isEditable = true;
+    public bool IsEditable { get => _isEditable; private set { if (SetField(ref _isEditable, value)) OnPropertyChanged(nameof(IsReadOnly)); } }
+    public bool IsReadOnly => !_isEditable;
+
+    public void SetEditable(bool editable)
+    {
+        if (_isEditable == editable) return;
+        IsEditable = editable;
+        System.Windows.Application.Current?.Dispatcher.BeginInvoke(() => Populate(BuildDisplay()));
+    }
+
     public ICommand ReDetectCommand { get; }
     public ICommand AutoArrangeCommand { get; }
     public ICommand SaveCommand { get; }
@@ -48,7 +61,7 @@ public sealed class CalibrationViewModel : ObservableObject
     public void ShutDown() => Microsoft.Win32.SystemEvents.DisplaySettingsChanged -= OnDisplaysChanged;
 
     /// <summary>Saves silently (no status message) — used for auto-save after a drag.</summary>
-    public void AutoSave() => PersistCurrent();
+    public void AutoSave() { if (_isEditable) PersistCurrent(); }
 
     private void OnStoreSaved()
     {
@@ -193,7 +206,12 @@ public sealed class CalibrationViewModel : ObservableObject
         var detected = new MonitorEnumerator().Enumerate();
         var saved = LayoutStore.Load(AppPaths.LayoutFile);
         var merged = saved is null ? new DesktopLayout(detected) : LayoutStore.Merge(detected, saved);
-        var shown = merged.Monitors.Where(m => m.MachineId == _local || _activeRemotes.Contains(m.MachineId));
+        // Receiver (read-only): mirror the whole plane the controller sends, so every
+        // machine shows the same picture. Controller: show local + connected remotes,
+        // hiding offline machines (their placement stays saved for reconnect).
+        var shown = _isEditable
+            ? merged.Monitors.Where(m => m.MachineId == _local || _activeRemotes.Contains(m.MachineId))
+            : merged.Monitors;
         return new DesktopLayout(shown);
     }
 
@@ -211,6 +229,7 @@ public sealed class CalibrationViewModel : ObservableObject
 
     private void AutoArrange()
     {
+        if (!_isEditable) { StatusText = "배치는 조작 기기에서만 변경할 수 있습니다."; return; }
         // Re-seed left-to-right in pixel order, top-aligned, no gaps.
         var ordered = Monitors.OrderBy(m => m.PixelLeft).ToList();
         double cursorX = 0;
@@ -246,6 +265,7 @@ public sealed class CalibrationViewModel : ObservableObject
     /// width/height from the pixel aspect ratio (square pixels assumed).</summary>
     public void ResizeMonitor(MonitorViewModel m, double diagonalInches)
     {
+        if (!_isEditable) { StatusText = "배치는 조작 기기에서만 변경할 수 있습니다."; return; }
         if (diagonalInches is < 5 or > 120)
         {
             StatusText = "5~120인치 범위로 입력하세요.";
@@ -265,6 +285,7 @@ public sealed class CalibrationViewModel : ObservableObject
     /// it wrong (or a remote arrived from a build without the flag).</summary>
     public void ToggleKind(MonitorViewModel m)
     {
+        if (!_isEditable) { StatusText = "배치는 조작 기기에서만 변경할 수 있습니다."; return; }
         m.IsLaptop = !m.IsLaptop;
         Save();
         StatusText = $"'{m.DisplayName}'을(를) {m.KindLabel}(으)로 변경했습니다.";
@@ -274,6 +295,7 @@ public sealed class CalibrationViewModel : ObservableObject
     /// monitors are physically attached and would only re-appear on re-detect.</summary>
     public void RemoveMonitor(MonitorViewModel m)
     {
+        if (!_isEditable) { StatusText = "배치는 조작 기기에서만 변경할 수 있습니다."; return; }
         if (!m.IsRemote)
         {
             StatusText = "로컬 모니터는 제거할 수 없습니다 (실제 연결된 화면).";

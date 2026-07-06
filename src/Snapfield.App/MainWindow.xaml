@@ -88,6 +88,27 @@
             <Setter Property="Padding" Value="6,1"/>
         </Style>
 
+        <!-- calibration inspector -->
+        <Style x:Key="InspectorButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="HorizontalAlignment" Value="Stretch"/>
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Setter Property="Padding" Value="10,7"/>
+            <Setter Property="Margin" Value="0,7,0,0"/>
+        </Style>
+        <Style x:Key="InspectorChip" TargetType="Border">
+            <Setter Property="CornerRadius" Value="9"/>
+            <Setter Property="Padding" Value="7,1.5"/>
+            <Setter Property="Background" Value="#1B1C26"/>
+            <Setter Property="BorderBrush" Value="{StaticResource Hairline}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Margin" Value="0,0,5,0"/>
+        </Style>
+        <Style x:Key="InspectorKv" TargetType="Border">
+            <Setter Property="BorderBrush" Value="#1E1F2C"/>
+            <Setter Property="BorderThickness" Value="0,0,0,1"/>
+            <Setter Property="Padding" Value="0,5"/>
+        </Style>
+
         <Style x:Key="RecentRow" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
             <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
             <Setter Property="HorizontalAlignment" Value="Stretch"/>
@@ -469,7 +490,7 @@
             </Grid>
 
             <!-- ═══════════ TAB · 모니터 배치 (calibration) ═══════════ -->
-            <DockPanel DataContext="{Binding Calibration}"
+            <DockPanel x:Name="CalibrationRoot" DataContext="{Binding Calibration}"
                        Visibility="{Binding DataContext.IsCalibrate, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource B2V}}">
                 <Border DockPanel.Dock="Bottom" Background="#13131C" Padding="12,7">
                     <DockPanel LastChildFill="False">
@@ -483,7 +504,85 @@
                                    VerticalAlignment="Center" FontSize="11.5"/>
                     </DockPanel>
                 </Border>
-                <ItemsControl x:Name="Surface" ItemsSource="{Binding Monitors}" SizeChanged="Surface_SizeChanged" ClipToBounds="True">
+                <!-- inspector: opens on selection, surfaces the right-click-only actions -->
+                <Border DockPanel.Dock="Right" Width="212" Background="#161620"
+                        BorderBrush="{StaticResource Hairline}" BorderThickness="1,0,0,0"
+                        Visibility="{Binding HasSelection, Converter={StaticResource B2V}}">
+                    <StackPanel Margin="14,12" DataContext="{Binding SelectedMonitor}">
+                        <DockPanel>
+                            <Button DockPanel.Dock="Right" Content="✕" Padding="7,3" FontSize="10" VerticalAlignment="Top"
+                                    Command="{Binding DataContext.ClearSelectionCommand, ElementName=CalibrationRoot}"/>
+                            <TextBlock Text="{Binding DisplayName}" Foreground="{StaticResource cream}" FontSize="13.5"
+                                       FontWeight="Bold" TextWrapping="Wrap" VerticalAlignment="Center"/>
+                        </DockPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,8,0,11">
+                            <Border Style="{StaticResource InspectorChip}">
+                                <Border.Resources><Style TargetType="TextBlock">
+                                    <Setter Property="Foreground" Value="#9DB4E8"/>
+                                    <Style.Triggers><DataTrigger Binding="{Binding IsRemote}" Value="True">
+                                        <Setter Property="Foreground" Value="#F2D5A5"/></DataTrigger></Style.Triggers>
+                                </Style></Border.Resources>
+                                <TextBlock Text="{Binding MachineId}" FontSize="9.5"/>
+                            </Border>
+                            <Border Style="{StaticResource InspectorChip}">
+                                <TextBlock FontSize="9.5" Foreground="#9A9EAD">
+                                    <TextBlock.Style><Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="로컬"/>
+                                        <Style.Triggers><DataTrigger Binding="{Binding IsRemote}" Value="True">
+                                            <Setter Property="Text" Value="원격"/></DataTrigger></Style.Triggers>
+                                    </Style></TextBlock.Style>
+                                </TextBlock>
+                            </Border>
+                            <Border Style="{StaticResource InspectorChip}">
+                                <TextBlock Text="{Binding KindLabel}" FontSize="9.5" Foreground="#9A9EAD"/>
+                            </Border>
+                        </StackPanel>
+                        <Border Style="{StaticResource InspectorKv}">
+                            <DockPanel>
+                                <TextBlock Text="해상도" Foreground="#9A9EAD" FontSize="11.5"/>
+                                <TextBlock Text="{Binding ResolutionText}" HorizontalAlignment="Right" Foreground="{StaticResource cream}" FontFamily="Consolas" FontSize="11.5"/>
+                            </DockPanel>
+                        </Border>
+                        <Border Style="{StaticResource InspectorKv}">
+                            <DockPanel>
+                                <TextBlock Text="실측 크기" Foreground="#9A9EAD" FontSize="11.5"/>
+                                <TextBlock Text="{Binding PhysicalText}" HorizontalAlignment="Right" Foreground="{StaticResource cream}" FontFamily="Consolas" FontSize="11.5"/>
+                            </DockPanel>
+                        </Border>
+                        <Border Style="{StaticResource InspectorKv}">
+                            <DockPanel>
+                                <TextBlock Text="대각선" Foreground="#9A9EAD" FontSize="11.5"/>
+                                <TextBlock Text="{Binding DiagonalText}" HorizontalAlignment="Right" Foreground="{StaticResource cream}" FontFamily="Consolas" FontSize="11.5"/>
+                            </DockPanel>
+                        </Border>
+                        <Button Content="📐 실제 크기 보정 (인치)…" Style="{StaticResource InspectorButton}" Margin="0,13,0,0"
+                                Click="ResizeMonitor_Click"
+                                IsEnabled="{Binding DataContext.IsEditable, ElementName=CalibrationRoot}"/>
+                        <Button Content="💻 노트북 ↔ 모니터 전환" Style="{StaticResource InspectorButton}"
+                                Click="ToggleKind_Click"
+                                IsEnabled="{Binding DataContext.IsEditable, ElementName=CalibrationRoot}"/>
+                        <Button Content="🗑 평면에서 제거" Click="RemoveMonitor_Click" ToolTipService.ShowOnDisabled="True">
+                            <Button.Style><Style TargetType="Button" BasedOn="{StaticResource InspectorButton}">
+                                <Setter Property="IsEnabled" Value="False"/>
+                                <Setter Property="ToolTip" Value="로컬 모니터는 제거할 수 없어요 (실제 연결된 화면)"/>
+                                <Style.Triggers>
+                                    <MultiDataTrigger>
+                                        <MultiDataTrigger.Conditions>
+                                            <Condition Binding="{Binding IsRemote}" Value="True"/>
+                                            <Condition Binding="{Binding DataContext.IsEditable, ElementName=CalibrationRoot}" Value="True"/>
+                                        </MultiDataTrigger.Conditions>
+                                        <Setter Property="IsEnabled" Value="True"/>
+                                        <Setter Property="ToolTip" Value="{x:Null}"/>
+                                    </MultiDataTrigger>
+                                </Style.Triggers>
+                            </Style></Button.Style>
+                        </Button>
+                        <TextBlock Text="화면 크기가 실물과 다르면 경계에서 커서가 걸릴 수 있어요. 모니터의 대각선 인치를 알면 '실제 크기 보정'으로 맞추세요."
+                                   Foreground="#5B6070" FontSize="10" TextWrapping="Wrap" Margin="0,12,0,0"/>
+                    </StackPanel>
+                </Border>
+                <ItemsControl x:Name="Surface" ItemsSource="{Binding Monitors}" SizeChanged="Surface_SizeChanged" ClipToBounds="True"
+                              MouseLeftButtonDown="Surface_MouseLeftButtonDown">
                     <ItemsControl.ItemsPanel><ItemsPanelTemplate><Canvas Background="{StaticResource deskWood}"/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
                     <ItemsControl.ItemContainerStyle>
                         <Style TargetType="ContentPresenter">

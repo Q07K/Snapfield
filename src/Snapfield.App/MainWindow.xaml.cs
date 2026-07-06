@@ -62,15 +62,18 @@ public partial class MainWindow : Window
     {
         var el = (FrameworkElement)sender;
         if (el.DataContext is not MonitorViewModel monitor) return;
-        if (!Cal.IsEditable) return; // receiver: layout is controller-owned, read-only
+        Cal.Select(monitor); // opens the inspector — info shows on read-only planes too
+        e.Handled = true;
+        if (!Cal.IsEditable) return; // receiver: layout is controller-owned, no drag
         _dragging = monitor;
         _dragStartCanvas = e.GetPosition(Surface);
         _dragStartXMm = monitor.XMm;
         _dragStartYMm = monitor.YMm;
-        foreach (var m in Cal.Monitors) m.IsSelected = ReferenceEquals(m, monitor);
         el.CaptureMouse();
-        e.Handled = true;
     }
+
+    /// <summary>Click on empty canvas — close the inspector.</summary>
+    private void Surface_MouseLeftButtonDown(object sender, MouseButtonEventArgs e) => Cal.Select(null);
 
     private void Monitor_MouseMove(object sender, MouseEventArgs e)
     {

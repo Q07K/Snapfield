@@ -39,12 +39,14 @@ public sealed class CalibrationViewModel : ObservableObject
     public ICommand ReDetectCommand { get; }
     public ICommand AutoArrangeCommand { get; }
     public ICommand SaveCommand { get; }
+    public ICommand ClearSelectionCommand { get; }
 
     public CalibrationViewModel()
     {
         ReDetectCommand = new RelayCommand(ReDetect);
         AutoArrangeCommand = new RelayCommand(AutoArrange);
         SaveCommand = new RelayCommand(Save);
+        ClearSelectionCommand = new RelayCommand(() => Select(null));
         Load();
 
         // A network session persists the peer's monitors into the layout file on
@@ -108,6 +110,23 @@ public sealed class CalibrationViewModel : ObservableObject
 
     private string _statusText = "";
     public string StatusText { get => _statusText; private set => SetField(ref _statusText, value); }
+
+    // ── Selection (drives the inspector panel) ───────────────────────────────
+    private MonitorViewModel? _selected;
+    public MonitorViewModel? SelectedMonitor
+    {
+        get => _selected;
+        private set { if (SetField(ref _selected, value)) OnPropertyChanged(nameof(HasSelection)); }
+    }
+    public bool HasSelection => _selected is not null;
+
+    /// <summary>Selects a monitor (null = clear). Works on read-only planes too —
+    /// the inspector shows info there, just with the actions disabled.</summary>
+    public void Select(MonitorViewModel? monitor)
+    {
+        foreach (var m in Monitors) m.IsSelected = ReferenceEquals(m, monitor);
+        SelectedMonitor = monitor;
+    }
 
     /// <summary>Recompute the fit-to-view transform for a new viewport size.</summary>
     public void UpdateViewport(double width, double height)
@@ -301,6 +320,7 @@ public sealed class CalibrationViewModel : ObservableObject
             StatusText = "로컬 모니터는 제거할 수 없습니다 (실제 연결된 화면).";
             return;
         }
+        if (ReferenceEquals(_selected, m)) Select(null);
         Monitors.Remove(m);
         RecomputeTransform();
         PersistCurrent(excludeKey: $"{m.MachineId}/{m.DeviceId}"); // drop from file too
@@ -309,6 +329,7 @@ public sealed class CalibrationViewModel : ObservableObject
 
     private void Populate(DesktopLayout layout)
     {
+        SelectedMonitor = null; // the view models are about to be rebuilt
         Monitors.Clear();
         foreach (var m in layout.Monitors)
             Monitors.Add(new MonitorViewModel(m, this));

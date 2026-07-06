@@ -125,17 +125,21 @@ public static class ClipboardIO
 
         var dibLen = bmpBytes.Length - 14;
         if (dibLen <= 0) return false;
-        if (!OpenWithRetry()) return false;
+
+        // Prepare the HGLOBAL fully BEFORE touching the clipboard: emptying
+        // first and failing after left the user with an EMPTY clipboard (paste
+        // dead everywhere) whenever a later step went wrong.
+        var handle = GlobalAlloc(GMEM_MOVEABLE, (UIntPtr)dibLen);
+        if (handle == IntPtr.Zero) return false;
+        var ptr = GlobalLock(handle);
+        if (ptr == IntPtr.Zero) { GlobalFree(handle); return false; }
+        try { Marshal.Copy(bmpBytes, 14, ptr, dibLen); }
+        finally { GlobalUnlock(handle); }
+
+        if (!OpenWithRetry()) { GlobalFree(handle); return false; }
         try
         {
             EmptyClipboard();
-            var handle = GlobalAlloc(GMEM_MOVEABLE, (UIntPtr)dibLen);
-            if (handle == IntPtr.Zero) return false;
-            var ptr = GlobalLock(handle);
-            if (ptr == IntPtr.Zero) { GlobalFree(handle); return false; }
-            try { Marshal.Copy(bmpBytes, 14, ptr, dibLen); }
-            finally { GlobalUnlock(handle); }
-
             if (SetClipboardData(CF_DIB, handle) == IntPtr.Zero)
             {
                 GlobalFree(handle);

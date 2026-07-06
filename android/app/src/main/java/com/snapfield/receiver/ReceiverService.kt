@@ -228,17 +228,23 @@ class ReceiverService : Service() {
 
     /** Clipboard image (a content URI) → PNG → the PC clipboard. */
     private fun syncImage(uri: android.net.Uri) {
+        // Our own provider URI can only mean "the PC just sent this" — bouncing
+        // it back re-encoded used to defeat the md5 guard (PNG encoders aren't
+        // byte-stable) and clobber the PC clipboard with the echo.
+        if (uri.authority == ClipImageProvider.AUTHORITY) return
         try {
-            val bmp = contentResolver.openInputStream(uri)?.use {
-                android.graphics.BitmapFactory.decodeStream(it)
-            } ?: return
+            // Hash the RAW bytes first: stable for the same source, no re-encode.
+            val raw = contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return
+            if (raw.size > 24 * 1024 * 1024) { setStatus("이미지가 너무 큽니다 — 전송 생략."); return }
+            val rawMd5 = md5(raw)
+            if (rawMd5 == lastImageMd5) return
+            lastImageMd5 = rawMd5
+
+            val bmp = android.graphics.BitmapFactory.decodeByteArray(raw, 0, raw.size) ?: return
             val out = java.io.ByteArrayOutputStream()
             bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
             val png = out.toByteArray()
             if (png.size > 8 * 1024 * 1024) { setStatus("이미지가 너무 큽니다(>8MB) — 전송 생략."); return }
-            val md5 = md5(png)
-            if (md5 == lastImageMd5) return // it's the image we just applied/sent
-            lastImageMd5 = md5
             link?.send(NetMessage(type = MsgType.ClipboardImage,
                 text = android.util.Base64.encodeToString(png, android.util.Base64.NO_WRAP)))
             setStatus("클립보드 이미지 전송 (${png.size / 1024}KB)")

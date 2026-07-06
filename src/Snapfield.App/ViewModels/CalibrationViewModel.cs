@@ -41,6 +41,7 @@ public sealed class CalibrationViewModel : ObservableObject
     public ICommand AutoArrangeCommand { get; }
     public ICommand SaveCommand { get; }
     public ICommand ClearSelectionCommand { get; }
+    public ICommand ResetViewCommand { get; }
 
     public CalibrationViewModel()
     {
@@ -48,6 +49,7 @@ public sealed class CalibrationViewModel : ObservableObject
         AutoArrangeCommand = new RelayCommand(AutoArrange);
         SaveCommand = new RelayCommand(Save);
         ClearSelectionCommand = new RelayCommand(() => Select(null));
+        ResetViewCommand = new RelayCommand(ResetView);
         Load();
 
         // A network session persists the peer's monitors into the layout file on
@@ -149,21 +151,94 @@ public sealed class CalibrationViewModel : ObservableObject
             maxX = Math.Max(maxX, m.XMm + m.WidthMm);
             maxY = Math.Max(maxY, m.YMm + m.HeightMm);
         }
-        var planeW = Math.Max(maxX - minX, 1);
-        var planeH = Math.Max(maxY - minY, 1);
+        _planeWMm = Math.Max(maxX - minX, 1);
+        _planeHMm = Math.Max(maxY - minY, 1);
 
         var usableW = _viewportW * (1 - 2 * MarginFraction);
         var usableH = _viewportH * (1 - 2 * MarginFraction);
-        Scale = Math.Min(usableW / planeW, usableH / planeH);
+        _fitScale = Math.Min(usableW / _planeWMm, usableH / _planeHMm);
+        Scale = _fitScale * _userZoom;
 
         _planeMinXMm = minX;
         _planeMinYMm = minY;
-        // Centre the plane in the viewport.
-        _offsetX = (_viewportW - planeW * Scale) / 2;
-        _offsetY = (_viewportH - planeH * Scale) / 2;
+        // Centre the plane in the viewport, then apply the user's pan.
+        _offsetX = (_viewportW - _planeWMm * Scale) / 2 + _panX;
+        _offsetY = (_viewportH - _planeHMm * Scale) / 2 + _panY;
 
         foreach (var m in Monitors) m.RefreshCanvas();
         RefreshSeams(force: true);
+    }
+
+    // ── User zoom & pan ──────────────────────────────────────────────────────
+    // Fit-to-view is zoom 1; the wheel zooms in around the cursor and dragging
+    // empty canvas pans. With many devices the fit gets tiny — this is how you
+    // read a single monitor's card without squinting.
+
+    private const double MaxZoom = 8.0;
+    private double _fitScale = 1.0, _planeWMm = 1, _planeHMm = 1;
+    private double _userZoom = 1.0, _panX, _panY;
+
+    public bool IsZoomed => _userZoom > 1.0 + 1e-9;
+    public string ZoomText => $"{_userZoom * 100:0}%";
+
+    /// <summary>Zooms by a factor, keeping the canvas point (cx, cy) stationary.</summary>
+    public void ZoomAt(double factor, double cx, double cy)
+    {
+        if (Monitors.Count == 0) return;
+        var newZoom = Math.Clamp(_userZoom * factor, 1.0, MaxZoom);
+        if (Math.Abs(newZoom - _userZoom) < 1e-6) return;
+
+        var ratio = newZoom / _userZoom;
+        var newOffX = cx - (cx - _offsetX) * ratio;
+        var newOffY = cy - (cy - _offsetY) * ratio;
+        _userZoom = newZoom;
+
+        if (!IsZoomed) { _panX = 0; _panY = 0; } // back at fit: snap to centre
+        else
+        {
+            var newScale = _fitScale * _userZoom;
+            _panX = newOffX - (_viewportW - _planeWMm * newScale) / 2;
+            _panY = newOffY - (_viewportH - _planeHMm * newScale) / 2;
+            ClampPan();
+        }
+        RecomputeTransform();
+        RaiseZoomChanged();
+    }
+
+    /// <summary>Pans the view by a canvas-pixel delta (no-op at fit zoom).</summary>
+    public void PanBy(double dx, double dy)
+    {
+        if (!IsZoomed) return;
+        _panX += dx;
+        _panY += dy;
+        ClampPan();
+        RecomputeTransform();
+    }
+
+    public void ResetView()
+    {
+        _userZoom = 1.0;
+        _panX = _panY = 0;
+        RecomputeTransform();
+        RaiseZoomChanged();
+    }
+
+    /// <summary>Keeps at least a slice of the plane inside the viewport.</summary>
+    private void ClampPan()
+    {
+        const double keep = 80; // canvas px of plane that must stay visible
+        var planeW = _planeWMm * _fitScale * _userZoom;
+        var planeH = _planeHMm * _fitScale * _userZoom;
+        var baseX = (_viewportW - planeW) / 2;
+        var baseY = (_viewportH - planeH) / 2;
+        _panX = Math.Clamp(_panX, keep - baseX - planeW, _viewportW - keep - baseX);
+        _panY = Math.Clamp(_panY, keep - baseY - planeH, _viewportH - keep - baseY);
+    }
+
+    private void RaiseZoomChanged()
+    {
+        OnPropertyChanged(nameof(IsZoomed));
+        OnPropertyChanged(nameof(ZoomText));
     }
 
     // ── Seam flow markers ────────────────────────────────────────────────────

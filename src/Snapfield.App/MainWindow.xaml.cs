@@ -72,8 +72,45 @@ public partial class MainWindow : Window
         el.CaptureMouse();
     }
 
-    /// <summary>Click on empty canvas — close the inspector.</summary>
-    private void Surface_MouseLeftButtonDown(object sender, MouseButtonEventArgs e) => Cal.Select(null);
+    // ── Canvas zoom & pan ─────────────────────────────────────────────────────
+    private bool _panning;
+    private Point _panLast;
+    private double _panDistPx;
+
+    /// <summary>Wheel zooms around the cursor (works over monitors too).</summary>
+    private void Canvas_MouseWheel(object sender, MouseWheelEventArgs e)
+    {
+        var p = e.GetPosition(Surface);
+        Cal.ZoomAt(e.Delta > 0 ? 1.2 : 1 / 1.2, p.X, p.Y);
+        e.Handled = true;
+    }
+
+    /// <summary>Empty-canvas press: drag pans (when zoomed), a plain click clears
+    /// the selection — decided on release by how far the mouse travelled.</summary>
+    private void Surface_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        _panning = true;
+        _panDistPx = 0;
+        _panLast = e.GetPosition(Surface);
+        Surface.CaptureMouse();
+    }
+
+    private void Surface_MouseMove(object sender, MouseEventArgs e)
+    {
+        if (!_panning) return;
+        var p = e.GetPosition(Surface);
+        _panDistPx += Math.Abs(p.X - _panLast.X) + Math.Abs(p.Y - _panLast.Y);
+        Cal.PanBy(p.X - _panLast.X, p.Y - _panLast.Y);
+        _panLast = p;
+    }
+
+    private void Surface_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (!_panning) return;
+        _panning = false;
+        Surface.ReleaseMouseCapture();
+        if (_panDistPx < 4) Cal.Select(null); // didn't move: it was a click
+    }
 
     private void Monitor_MouseMove(object sender, MouseEventArgs e)
     {

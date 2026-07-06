@@ -496,6 +496,10 @@
                     <DockPanel LastChildFill="False">
                         <Button DockPanel.Dock="Left" Content="자동 정렬로 초기화" Command="{Binding AutoArrangeCommand}"
                                 Visibility="{Binding IsEditable, Converter={StaticResource B2V}}"/>
+                        <TextBlock DockPanel.Dock="Left" VerticalAlignment="Center" FontSize="11" Margin="12,0,0,0">
+                            <Run Text="‹·›" FontFamily="Consolas" FontWeight="Bold" Foreground="#5FCF8A"/><Run Text=" 커서 통과 구간" Foreground="#5B6070"/>
+                            <Run Text="   ✕" Foreground="#E06A6A"/><Run Text=" 상대 화면 밖 (가장자리로 보정됨)" Foreground="#5B6070"/>
+                        </TextBlock>
                         <TextBlock DockPanel.Dock="Left" VerticalAlignment="Center" FontSize="11.5"
                                    Foreground="{StaticResource creamDim}"
                                    Text="🔒 조작 기기에서 관리하는 배치입니다 (읽기 전용)"
@@ -581,6 +585,7 @@
                                    Foreground="#5B6070" FontSize="10" TextWrapping="Wrap" Margin="0,12,0,0"/>
                     </StackPanel>
                 </Border>
+                <Grid ClipToBounds="True">
                 <ItemsControl x:Name="Surface" ItemsSource="{Binding Monitors}" SizeChanged="Surface_SizeChanged" ClipToBounds="True"
                               MouseLeftButtonDown="Surface_MouseLeftButtonDown">
                     <ItemsControl.ItemsPanel><ItemsPanelTemplate><Canvas Background="{StaticResource deskWood}"/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
@@ -654,6 +659,60 @@
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>
+
+                <!-- seam flow overlay: where the cursor crosses between machines.
+                     Draw-only (no hit testing) so drags pass straight through. -->
+                <ItemsControl ItemsSource="{Binding ArrowMarkers}" IsHitTestVisible="False">
+                    <ItemsControl.ItemsPanel><ItemsPanelTemplate><Canvas/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemContainerStyle>
+                        <Style TargetType="ContentPresenter">
+                            <Setter Property="Canvas.Left" Value="{Binding X}"/>
+                            <Setter Property="Canvas.Top" Value="{Binding Y}"/>
+                        </Style>
+                    </ItemsControl.ItemContainerStyle>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="‹·›" FontFamily="Consolas" FontSize="13" FontWeight="Bold"
+                                       Foreground="#5FCF8A" RenderTransformOrigin="0.5,0.5">
+                                <TextBlock.Effect><DropShadowEffect Color="#5FCF8A" BlurRadius="9" ShadowDepth="0" Opacity="0.85"/></TextBlock.Effect>
+                                <TextBlock.RenderTransform>
+                                    <TransformGroup>
+                                        <TranslateTransform x:Name="drift"/>
+                                        <RotateTransform Angle="{Binding Angle}"/>
+                                    </TransformGroup>
+                                </TextBlock.RenderTransform>
+                                <TextBlock.Triggers>
+                                    <EventTrigger RoutedEvent="TextBlock.Loaded">
+                                        <BeginStoryboard><Storyboard RepeatBehavior="Forever" AutoReverse="True">
+                                            <DoubleAnimation Storyboard.TargetName="drift" Storyboard.TargetProperty="X"
+                                                             From="-4" To="5" Duration="0:0:0.8"/>
+                                            <DoubleAnimation Storyboard.TargetProperty="Opacity"
+                                                             From="0.35" To="1" Duration="0:0:0.8"/>
+                                        </Storyboard></BeginStoryboard>
+                                    </EventTrigger>
+                                </TextBlock.Triggers>
+                            </TextBlock>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+                <ItemsControl ItemsSource="{Binding BlockMarkers}" IsHitTestVisible="False">
+                    <ItemsControl.ItemsPanel><ItemsPanelTemplate><Canvas/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemContainerStyle>
+                        <Style TargetType="ContentPresenter">
+                            <Setter Property="Canvas.Left" Value="{Binding X}"/>
+                            <Setter Property="Canvas.Top" Value="{Binding Y}"/>
+                        </Style>
+                    </ItemsControl.ItemContainerStyle>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="✕" FontSize="11" FontWeight="Bold" Foreground="#E06A6A" Opacity="0.85"
+                                       Width="20" TextAlignment="Center">
+                                <TextBlock.Effect><DropShadowEffect Color="#E06A6A" BlurRadius="7" ShadowDepth="0" Opacity="0.55"/></TextBlock.Effect>
+                            </TextBlock>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+                </Grid>
             </DockPanel>
 
             <!-- ═══════════ TAB · 설정 (settings) ═══════════ -->

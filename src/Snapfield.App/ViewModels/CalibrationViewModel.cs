@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Windows.Input;
 using Snapfield.App.Mvvm;
+using Snapfield.Core.Input;
 using Snapfield.Core.Model;
 using Snapfield.Core.Persistence;
 using Snapfield.Platform.Monitors;
@@ -162,6 +163,68 @@ public sealed class CalibrationViewModel : ObservableObject
         _offsetY = (_viewportH - planeH * Scale) / 2;
 
         foreach (var m in Monitors) m.RefreshCanvas();
+        RefreshSeams(force: true);
+    }
+
+    // ── Seam flow markers ────────────────────────────────────────────────────
+    // Where the cursor crosses between machines: flow arrows on direct bands,
+    // ✕ marks where the neighbour has no facing edge (entry gets clamped there).
+
+    /// <summary>One marker on the canvas (top-left position, pre-centred).</summary>
+    public sealed class SeamMarker
+    {
+        public double X { get; init; }
+        public double Y { get; init; }
+        public double Angle { get; init; } // 0 = horizontal flow, 90 = vertical
+    }
+
+    private IReadOnlyList<SeamMarker> _arrowMarkers = Array.Empty<SeamMarker>();
+    public IReadOnlyList<SeamMarker> ArrowMarkers { get => _arrowMarkers; private set => SetField(ref _arrowMarkers, value); }
+
+    private IReadOnlyList<SeamMarker> _blockMarkers = Array.Empty<SeamMarker>();
+    public IReadOnlyList<SeamMarker> BlockMarkers { get => _blockMarkers; private set => SetField(ref _blockMarkers, value); }
+
+    private const double MarkerSpacingPx = 34;  // one marker per this many canvas pixels
+    private const double MinSegmentPx = 10;     // don't mark slivers
+    private long _lastSeamTick;
+
+    /// <summary>Recompute the seam markers. Cheap, but throttled anyway because it
+    /// runs on every mouse-move during a drag; the drag-release recompute forces.</summary>
+    internal void RefreshSeams(bool force = false)
+    {
+        var now = Environment.TickCount64;
+        if (!force && now - _lastSeamTick < 80) return;
+        _lastSeamTick = now;
+
+        var rects = new List<SeamRect>(Monitors.Count);
+        foreach (var m in Monitors)
+            rects.Add(new SeamRect(m.MachineId, m.XMm, m.YMm, m.WidthMm, m.HeightMm));
+
+        var arrows = new List<SeamMarker>();
+        var blocks = new List<SeamMarker>();
+        foreach (var s in SeamScanner.Scan(rects))
+        {
+            var from = s.Vertical ? MmToCanvasY(s.StartMm) : MmToCanvasX(s.StartMm);
+            var to = s.Vertical ? MmToCanvasY(s.EndMm) : MmToCanvasX(s.EndMm);
+            var seam = s.Vertical ? MmToCanvasX(s.SeamMm) : MmToCanvasY(s.SeamMm);
+            var len = to - from;
+            if (len < MinSegmentPx) continue;
+
+            var count = Math.Max(1, (int)(len / MarkerSpacingPx));
+            for (var i = 0; i < count; i++)
+            {
+                var along = from + len * (i + 0.5) / count;
+                var (x, y) = s.Vertical ? (seam, along) : (along, seam);
+                (s.Direct ? arrows : blocks).Add(new SeamMarker
+                {
+                    X = x - 10, // centre the ~20×16 marker glyph on the seam point
+                    Y = y - 8,
+                    Angle = s.Vertical ? 0 : 90,
+                });
+            }
+        }
+        ArrowMarkers = arrows;
+        BlockMarkers = blocks;
     }
 
     // ── Edge snapping ────────────────────────────────────────────────────────

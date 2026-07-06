@@ -114,6 +114,7 @@ public sealed class MonitorViewModel : ObservableObject
         var (sx, sy) = _owner.SnapEdges(this, newXMm, newYMm);
         XMm = sx;
         YMm = sy;
+        _owner.RefreshSeams(); // crossing bands follow the monitor live (throttled)
     }
 
     public MonitorInfo ToMonitorInfo() => new()

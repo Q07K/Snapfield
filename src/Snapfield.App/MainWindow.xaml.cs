@@ -1,6 +1,8 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Media.Effects;
 using Point = System.Windows.Point;
 using Snapfield.App.ViewModels;
 
@@ -24,6 +26,14 @@ public partial class MainWindow : Window
         InitializeComponent();
         var v = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
         Title = $"Snapfield  (v{v?.ToString(3)})";
+
+        _pinDigits = new[] { Pin0, Pin1, Pin2, Pin3, Pin4, Pin5 };
+        _pinBoxes = new[] { PinB0, PinB1, PinB2, PinB3, PinB4, PinB5 };
+        Loaded += (_, _) =>
+        {
+            if (DataContext is MainViewModel mv) mv.Network.PropertyChanged += Network_PropertyChanged;
+            RefreshPinSlots();
+        };
 
         // Tray-resident: closing hides to the tray; real exit is the tray menu.
         Closing += (_, e) =>
@@ -100,5 +110,88 @@ public partial class MainWindow : Window
     {
         if ((sender as FrameworkElement)?.DataContext is ToastItem t)
             ((MainViewModel)DataContext).DismissToast(t);
+    }
+
+    // ── Pin boxes: one invisible TextBox drives six drawn digit boxes ─────────
+    private readonly TextBlock[] _pinDigits;
+    private readonly Border[] _pinBoxes;
+    private static readonly Brush PinGreen = Frozen(0x5F, 0xCF, 0x8A); // matches the receiver's code
+    private static readonly Brush PinBlue = Frozen(0x5B, 0x87, 0xEE);  // active box
+    private static readonly Brush PinRed = Frozen(0xE0, 0x6A, 0x6A);   // auth failed
+    private static readonly Brush PinIdle = Frozen(0x26, 0x28, 0x38);  // empty box
+    private static readonly Effect PinGlow = FrozenGlow();
+
+    private static Brush Frozen(byte r, byte g, byte b)
+    {
+        var brush = new SolidColorBrush(Color.FromRgb(r, g, b));
+        brush.Freeze();
+        return brush;
+    }
+
+    private static Effect FrozenGlow()
+    {
+        var glow = new DropShadowEffect { Color = Color.FromRgb(0x5B, 0x87, 0xEE), BlurRadius = 12, ShadowDepth = 0, Opacity = 0.45 };
+        glow.Freeze();
+        return glow;
+    }
+
+    private NetworkViewModel? Net => (DataContext as MainViewModel)?.Network;
+
+    private void Network_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        switch (e.PropertyName)
+        {
+            case nameof(NetworkViewModel.PinError):
+                RefreshPinSlots();
+                if (Net?.PinError == true) // auth failed: put the user right back on the code
+                    Dispatcher.BeginInvoke(() => { PinBox.Focus(); PinBox.SelectAll(); });
+                break;
+            case nameof(NetworkViewModel.ShowNewForm) when Net?.ShowNewForm == true:
+                // Sheet opened: a discovered pick prefills the IP, so land on the code.
+                Dispatcher.BeginInvoke(() =>
+                {
+                    if (string.IsNullOrWhiteSpace(Net?.RemoteHost)) HostBox.Focus(); else PinBox.Focus();
+                });
+                break;
+        }
+    }
+
+    private void PinBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        // Digits only, max six — covers typing, IME leftovers, and any paste shape.
+        var clean = new string(PinBox.Text.Where(char.IsDigit).ToArray());
+        if (clean.Length > 6) clean = clean[..6];
+        if (clean != PinBox.Text)
+        {
+            var pos = Math.Min(PinBox.SelectionStart, clean.Length);
+            PinBox.Text = clean; // re-fires TextChanged with the clean value
+            PinBox.SelectionStart = pos;
+            return;
+        }
+
+        RefreshPinSlots();
+
+        // Six digits typed by hand → connect without hunting for a button.
+        // Recent/discovered paths set the pin programmatically and connect themselves.
+        if (clean.Length == 6 && PinBox.IsKeyboardFocused &&
+            Net is { } net && net.ConnectCommand.CanExecute(null))
+            net.ConnectCommand.Execute(null);
+    }
+
+    private void PinBox_FocusChanged(object sender, RoutedEventArgs e) => RefreshPinSlots();
+
+    private void RefreshPinSlots()
+    {
+        var text = PinBox.Text;
+        var err = Net?.PinError == true;
+        var focused = PinBox.IsKeyboardFocused;
+        for (var i = 0; i < 6; i++)
+        {
+            var current = i == text.Length && focused && !err;
+            _pinDigits[i].Text = i < text.Length ? text[i].ToString() : "";
+            _pinDigits[i].Foreground = err ? PinRed : PinGreen;
+            _pinBoxes[i].BorderBrush = err ? PinRed : current ? PinBlue : PinIdle;
+            _pinBoxes[i].Effect = current ? PinGlow : null;
+        }
     }
 }

@@ -191,7 +191,18 @@ public sealed class NetworkViewModel : ObservableObject
     public string RemoteHost { get => _remoteHost; set => SetField(ref _remoteHost, value); }
 
     private string _controllerPin = "";
-    public string ControllerPin { get => _controllerPin; set => SetField(ref _controllerPin, value); }
+    public string ControllerPin
+    {
+        get => _controllerPin;
+        set { if (SetField(ref _controllerPin, value)) PinError = false; } // retyping clears the error
+    }
+
+    private bool _pinError;
+    /// <summary>The last connect attempt failed authentication — the pin slots turn red.</summary>
+    public bool PinError { get => _pinError; private set => SetField(ref _pinError, value); }
+
+    private string _pinErrorText = "";
+    public string PinErrorText { get => _pinErrorText; private set => SetField(ref _pinErrorText, value); }
 
     private double _sensitivity = 1.0;
     public double Sensitivity
@@ -338,6 +349,7 @@ public sealed class NetworkViewModel : ObservableObject
         _session.EngineStatus += OnEngineStatus;
         _session.ReceiverActivity += OnReceiverActivity;
         _session.PeersChanged += OnPeersChanged;
+        _session.AuthFailed += OnAuthFailed;
         if (monitors.Count == 0)
             Status = "경고: 이 PC의 모니터를 하나도 인식하지 못했습니다!";
     }
@@ -364,6 +376,17 @@ public sealed class NetworkViewModel : ObservableObject
     // ── Session callbacks ─────────────────────────────────────────────────────
     private void OnStatus(string s) =>
         Application.Current?.Dispatcher.BeginInvoke(() => Status = s);
+
+    private void OnAuthFailed(string text) =>
+        Application.Current?.Dispatcher.BeginInvoke(() =>
+        {
+            // Reopen the sheet so the user fixes the code in place — the error
+            // shows under the slots, not as a gray status line after the fact.
+            PinErrorText = string.IsNullOrWhiteSpace(text) ? "연결 코드가 일치하지 않습니다." : text;
+            ShowAdvanced = false;
+            ShowNewForm = true;
+            PinError = true; // after ShowNewForm so the view can focus the slots on error
+        });
 
     private void OnPeersChanged(IReadOnlyList<string> names) =>
         Application.Current?.Dispatcher.BeginInvoke(() =>

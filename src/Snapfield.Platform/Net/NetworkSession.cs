@@ -57,6 +57,7 @@ public sealed class NetworkSession : IDisposable
     public event Action<EngineStatus>? EngineStatus;
     public event Action<long, int, int>? ReceiverActivity;             // (count, x, y) — receiver
     public event Action<IReadOnlyList<string>>? PeersChanged;          // connected receiver names — controller
+    public event Action<string>? AuthFailed;                           // wrong pin, conn dropped — controller
 
     public NetworkSession(string localMachineId, IReadOnlyList<MonitorInfo> localMonitors)
     {
@@ -193,6 +194,7 @@ public sealed class NetworkSession : IDisposable
                 lock (_lock) _conns.Remove(c);
                 c.Stop(); // release the socket — a removed conn never retries
                 RaisePeers();
+                AuthFailed?.Invoke(text);
             }
             return;
         }

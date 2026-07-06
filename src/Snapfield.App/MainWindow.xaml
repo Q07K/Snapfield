@@ -409,9 +409,49 @@
                                 <Border Width="38" Height="4" CornerRadius="2" Background="#3A3D50" Margin="0,0,0,14"/>
                                 <TextBlock Text="새 기기 연결" Foreground="#EAECF6" FontSize="15" FontWeight="Bold" Margin="0,0,0,14"/>
                                 <TextBlock Text="상대(수신) PC의 IP" Foreground="#9A9EAD" FontSize="11.5" Margin="0,0,0,5"/>
-                                <TextBox Text="{Binding RemoteHost, UpdateSourceTrigger=PropertyChanged}" FontSize="14"/>
-                                <TextBlock Text="연결 코드 (수신 PC 화면의 초록 숫자)" Foreground="#9A9EAD" FontSize="11.5" Margin="0,12,0,5"/>
-                                <TextBox Text="{Binding ControllerPin, UpdateSourceTrigger=PropertyChanged}" Width="150" HorizontalAlignment="Left" FontSize="14"/>
+                                <TextBox x:Name="HostBox" Text="{Binding RemoteHost, UpdateSourceTrigger=PropertyChanged}" FontSize="14"/>
+
+                                <!-- pin: six boxes, but ONE invisible TextBox drives them — the
+                                     active-box highlight advances as you type (looks and feels
+                                     like focus moving) without real focus juggling, so paste,
+                                     backspace, and IME edge cases just work -->
+                                <TextBlock Text="연결 코드" Foreground="#9A9EAD" FontSize="11.5" Margin="0,14,0,7"/>
+                                <Grid HorizontalAlignment="Left" Cursor="IBeam">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Border x:Name="PinB0" Width="42" Height="50" CornerRadius="9" Background="#10111A" BorderThickness="1.5" BorderBrush="#262838" Margin="0,0,8,0">
+                                            <TextBlock x:Name="Pin0" FontFamily="Consolas" FontSize="22" FontWeight="Bold" Foreground="#5FCF8A" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        </Border>
+                                        <Border x:Name="PinB1" Width="42" Height="50" CornerRadius="9" Background="#10111A" BorderThickness="1.5" BorderBrush="#262838" Margin="0,0,8,0">
+                                            <TextBlock x:Name="Pin1" FontFamily="Consolas" FontSize="22" FontWeight="Bold" Foreground="#5FCF8A" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        </Border>
+                                        <Border x:Name="PinB2" Width="42" Height="50" CornerRadius="9" Background="#10111A" BorderThickness="1.5" BorderBrush="#262838" Margin="0,0,8,0">
+                                            <TextBlock x:Name="Pin2" FontFamily="Consolas" FontSize="22" FontWeight="Bold" Foreground="#5FCF8A" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        </Border>
+                                        <Border x:Name="PinB3" Width="42" Height="50" CornerRadius="9" Background="#10111A" BorderThickness="1.5" BorderBrush="#262838" Margin="0,0,8,0">
+                                            <TextBlock x:Name="Pin3" FontFamily="Consolas" FontSize="22" FontWeight="Bold" Foreground="#5FCF8A" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        </Border>
+                                        <Border x:Name="PinB4" Width="42" Height="50" CornerRadius="9" Background="#10111A" BorderThickness="1.5" BorderBrush="#262838" Margin="0,0,8,0">
+                                            <TextBlock x:Name="Pin4" FontFamily="Consolas" FontSize="22" FontWeight="Bold" Foreground="#5FCF8A" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        </Border>
+                                        <Border x:Name="PinB5" Width="42" Height="50" CornerRadius="9" Background="#10111A" BorderThickness="1.5" BorderBrush="#262838">
+                                            <TextBlock x:Name="Pin5" FontFamily="Consolas" FontSize="22" FontWeight="Bold" Foreground="#5FCF8A" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        </Border>
+                                    </StackPanel>
+                                    <TextBox x:Name="PinBox" Opacity="0" MaxLength="6"
+                                             Text="{Binding ControllerPin, UpdateSourceTrigger=PropertyChanged}"
+                                             InputMethod.IsInputMethodEnabled="False"
+                                             TextChanged="PinBox_TextChanged"
+                                             GotKeyboardFocus="PinBox_FocusChanged" LostKeyboardFocus="PinBox_FocusChanged"/>
+                                </Grid>
+                                <StackPanel Orientation="Horizontal" Margin="0,9,0,0"
+                                            Visibility="{Binding PinError, Converter={StaticResource B2V}}">
+                                    <TextBlock Text="✕" Foreground="#E06A6A" FontSize="12" Margin="0,0,6,0"/>
+                                    <TextBlock Foreground="#E06A6A" FontSize="12" TextWrapping="Wrap" MaxWidth="380">
+                                        <Run Text="{Binding PinErrorText, Mode=OneWay}"/><Run Text=" 수신 PC 화면의 초록 숫자를 다시 확인하세요."/>
+                                    </TextBlock>
+                                </StackPanel>
+                                <TextBlock Text="수신 PC 화면의 초록 숫자 6자리 · 다 입력하면 자동으로 연결합니다"
+                                           Foreground="#5B6070" FontSize="10.5" Margin="0,8,0,0"/>
                                 <Button Content="고급 · 포트 설정 ▾" Command="{Binding ToggleAdvancedCommand}" HorizontalAlignment="Left"
                                         Margin="0,12,0,0" Padding="0,4" Background="Transparent" BorderThickness="0" Foreground="#7E8296" FontSize="11.5"/>
                                 <StackPanel Orientation="Horizontal" Margin="0,6,0,0" Visibility="{Binding ShowAdvanced, Converter={StaticResource B2V}}">

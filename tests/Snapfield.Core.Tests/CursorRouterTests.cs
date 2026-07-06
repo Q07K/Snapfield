@@ -74,6 +74,51 @@ public class CursorRouterTests
     }
 
     [Fact]
+    public void FastFlick_OvershootBeyondEdge_HandsOffImmediately()
+    {
+        // WH_MOUSE_LL delivers the PROPOSED position, which lands past the
+        // desktop edge on a fast move (measured: e.g. x=3214 on a 2880-wide
+        // screen). Such an event must hand off, not be discarded — discarding
+        // it made fast crossings stall at the seam.
+        var r = Router();
+        r.SeatLocal(1920, 1080);
+
+        var result = r.OnLocalAbsolute(4200, 1080); // 361px past the right edge
+
+        Assert.Equal(RouteTransition.ToRemote, result.Transition);
+        Assert.Equal("B", result.Owner!.MachineId);
+        Assert.False(r.IsLocalActive);
+    }
+
+    [Fact]
+    public void FastFlick_Overshoot_CarriesMomentumIntoRemote()
+    {
+        // +643px past the edge ≈ 100mm on the local panel (3840px / 597.6mm).
+        // The remote entry point should sit ~100mm past its left edge
+        // (531.4mm / 1920px → ~361px), not at the seam.
+        var r = Router();
+        r.SeatLocal(1920, 1080);
+
+        var result = r.OnLocalAbsolute(4482, 1080);
+
+        Assert.Equal(RouteTransition.ToRemote, result.Transition);
+        Assert.InRange(result.PixelX, 300, 430);
+        Assert.Equal(540, result.PixelY, 0); // physical height still preserved
+    }
+
+    [Fact]
+    public void Overshoot_WithNoRemoteBeyond_StaysLocal()
+    {
+        var r = new CursorRouter("A", new DesktopLayout(new[] { Local() }));
+        r.SeatLocal(1920, 1080);
+
+        var result = r.OnLocalAbsolute(4200, 1080);
+
+        Assert.Equal(RouteTransition.None, result.Transition);
+        Assert.True(r.IsLocalActive);
+    }
+
+    [Fact]
     public void MiddleOfScreen_DoesNotHandOff()
     {
         var r = Router();

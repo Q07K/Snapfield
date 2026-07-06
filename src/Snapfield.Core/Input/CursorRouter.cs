@@ -73,8 +73,27 @@ public sealed class CursorRouter
     /// </summary>
     public RouteResult OnLocalAbsolute(double pixelX, double pixelY)
     {
+        // The low-level hook reports the PROPOSED position, which lands past the
+        // desktop edge on a fast move (Windows clamps the real cursor only after
+        // the hook). Such an event is the strongest "pressing this edge" signal
+        // there is — clamp it back onto the nearest local monitor and keep the
+        // clipped-off distance as momentum for the remote entry point. Discarding
+        // it made fast crossings stall at the seam until a slow wiggle produced
+        // an event exactly on the edge row.
+        double overshootX = 0, overshootY = 0; // mm
         var phys = _mapper.PixelToPhysical(_localMachineId, pixelX, pixelY);
-        if (phys is null) return new RouteResult(RouteTransition.None, Active, 0, 0);
+        if (phys is null)
+        {
+            var host = NearestLocalByPixel(pixelX, pixelY);
+            if (host is null) return new RouteResult(RouteTransition.None, Active, 0, 0);
+            var pb = host.PixelBounds;
+            var cx = Math.Clamp(pixelX, pb.Left, pb.Right - 1);
+            var cy = Math.Clamp(pixelY, pb.Top, pb.Bottom - 1);
+            if (host.PixelsPerMmX > 0) overshootX = (pixelX - cx) / host.PixelsPerMmX;
+            if (host.PixelsPerMmY > 0) overshootY = (pixelY - cy) / host.PixelsPerMmY;
+            (pixelX, pixelY) = (cx, cy);
+            phys = _mapper.PixelToPhysical(host, cx, cy);
+        }
 
         var p = phys.Value;
         Virtual = p;
@@ -86,12 +105,34 @@ public sealed class CursorRouter
         var handoff = ProbeRemoteAcrossEdges(owner ?? Active, pixelX, pixelY, p);
         if (handoff is not null)
         {
-            Virtual = handoff.Value.Seed;
-            Active = handoff.Value.Monitor;
-            var (rx, ry) = _mapper.PhysicalToPixel(handoff.Value.Monitor, handoff.Value.Seed);
-            return new RouteResult(RouteTransition.ToRemote, handoff.Value.Monitor, rx, ry);
+            var target = handoff.Value.Monitor;
+            // Enter the remote as deep as the flick overshot, like a native seam.
+            var seed = target.PhysicalBounds.Clamp(new PhysicalPoint(
+                handoff.Value.Seed.XMm + overshootX,
+                handoff.Value.Seed.YMm + overshootY));
+            Virtual = seed;
+            Active = target;
+            var (rx, ry) = _mapper.PhysicalToPixel(target, seed);
+            return new RouteResult(RouteTransition.ToRemote, target, rx, ry);
         }
         return new RouteResult(RouteTransition.None, Active, pixelX, pixelY);
+    }
+
+    /// <summary>The local monitor nearest to a pixel position (squared distance
+    /// in this machine's virtual-desktop pixel space).</summary>
+    private MonitorInfo? NearestLocalByPixel(double x, double y)
+    {
+        MonitorInfo? best = null;
+        var bestD = double.MaxValue;
+        foreach (var m in _layout.MonitorsOf(_localMachineId))
+        {
+            var pb = m.PixelBounds;
+            var dx = Math.Max(Math.Max(pb.Left - x, x - (pb.Right - 1)), 0);
+            var dy = Math.Max(Math.Max(pb.Top - y, y - (pb.Bottom - 1)), 0);
+            var d = dx * dx + dy * dy;
+            if (d < bestD) { bestD = d; best = m; }
+        }
+        return best;
     }
 
     /// <summary>

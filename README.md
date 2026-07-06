@@ -27,6 +27,7 @@ Snapfield.sln
 │  │   ├─ Interop/           NativeMethods (DPI, EnumDisplayMonitors, EnumDisplayDevices)
 │  │   └─ Monitors/          MonitorEnumerator — 실물 열거 + EDID 물리 크기
 │  └─ Snapfield.App/         WPF 앱 — 한 창 3탭(연결 · 모니터 배치 · 설정), 트레이 상주
+├─ android/                  안드로이드 수신 앱 (실험적 — 현재는 빌드되는 껍데기, 릴리스에 APK 첨부)
 └─ tests/
    └─ Snapfield.Core.Tests/  단위 테스트 33개 (좌표 변환 · 커서 라우터 · 경계 스캔 · 레이아웃 병합)
 ```

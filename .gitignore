@@ -13,6 +13,12 @@ publish/
 # Test results
 [Tt]est[Rr]esults/
 
+# Android
+android/.gradle/
+android/**/build/
+android/local.properties
+*.keystore
+
 # OS
 Thumbs.db
 .DS_Store

@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The "Stack" mark, simplified: two overlapping monitors + cursor dot,
+     matching the desktop IconArt tile. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- back monitor (remote, warm) -->
+    <path
+        android:pathData="M40,34 h34 a4,4 0 0 1 4,4 v22 a4,4 0 0 1 -4,4 h-34 a4,4 0 0 1 -4,-4 v-22 a4,4 0 0 1 4,-4 z"
+        android:strokeColor="#EBA956"
+        android:strokeWidth="3"
+        android:fillColor="#171008" />
+
+    <!-- front monitor (local, blue) -->
+    <path
+        android:pathData="M30,46 h30 a4,4 0 0 1 4,4 v20 a4,4 0 0 1 -4,4 h-30 a4,4 0 0 1 -4,-4 v-20 a4,4 0 0 1 4,-4 z"
+        android:strokeColor="#5B87EE"
+        android:strokeWidth="3"
+        android:fillColor="#0D1120" />
+
+    <!-- cursor dot crossing the seam -->
+    <path
+        android:pathData="M64,52 m-4.5,0 a4.5,4.5 0 1 0 9,0 a4.5,4.5 0 1 0 -9,0"
+        android:fillColor="#EAECF6" />
+</vector>

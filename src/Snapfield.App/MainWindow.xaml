@@ -102,19 +102,78 @@
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
-        <!-- ═══ Header + tabs ═══ -->
+        <!-- ═══ Header + tabs + global status pill ═══ -->
         <Border Grid.Row="0" Background="#13131C" Padding="14,10">
-            <StackPanel Orientation="Horizontal">
-                <TextBlock Text="Snapfield" Foreground="{StaticResource cream}" FontSize="16" FontWeight="Bold"
+            <DockPanel>
+                <TextBlock DockPanel.Dock="Left" Text="Snapfield" Foreground="{StaticResource cream}" FontSize="16" FontWeight="Bold"
                            VerticalAlignment="Center" Margin="0,0,18,0"/>
-                <Border Background="#1B1C26" BorderBrush="{StaticResource Hairline}" BorderThickness="1" CornerRadius="9">
+
+                <!-- connection state, visible on every tab; hover reveals 끊기 -->
+                <Border DockPanel.Dock="Right" x:Name="StatusPill" VerticalAlignment="Center">
+                    <Border.Style><Style TargetType="Border">
+                        <Setter Property="CornerRadius" Value="14"/>
+                        <Setter Property="Padding" Value="11,5"/>
+                        <Setter Property="BorderThickness" Value="1"/>
+                        <Setter Property="Background" Value="#1B1C26"/>
+                        <Setter Property="BorderBrush" Value="{StaticResource Hairline}"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding Network.PillKind}" Value="Ok">
+                                <Setter Property="Background" Value="#12201A"/><Setter Property="BorderBrush" Value="#274434"/></DataTrigger>
+                            <DataTrigger Binding="{Binding Network.PillKind}" Value="Live">
+                                <Setter Property="Background" Value="#221A0F"/><Setter Property="BorderBrush" Value="#4A3A20"/></DataTrigger>
+                        </Style.Triggers>
+                    </Style></Border.Style>
+                    <StackPanel Orientation="Horizontal">
+                        <Ellipse Width="7" Height="7" VerticalAlignment="Center">
+                            <Ellipse.Style><Style TargetType="Ellipse">
+                                <Setter Property="Fill" Value="#3A3D50"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding Network.PillKind}" Value="Ok"><Setter Property="Fill" Value="#5FCF8A"/></DataTrigger>
+                                    <DataTrigger Binding="{Binding Network.PillKind}" Value="Live"><Setter Property="Fill" Value="#EBA956"/></DataTrigger>
+                                </Style.Triggers>
+                            </Style></Ellipse.Style>
+                        </Ellipse>
+                        <TextBlock Text="{Binding Network.PillText}" FontSize="11.5" VerticalAlignment="Center" Margin="7,0,0,0">
+                            <TextBlock.Style><Style TargetType="TextBlock">
+                                <Setter Property="Foreground" Value="#9A9EAD"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding Network.PillKind}" Value="Ok"><Setter Property="Foreground" Value="#B9E8CB"/></DataTrigger>
+                                    <DataTrigger Binding="{Binding Network.PillKind}" Value="Live"><Setter Property="Foreground" Value="#F2D5A5"/></DataTrigger>
+                                </Style.Triggers>
+                            </Style></TextBlock.Style>
+                        </TextBlock>
+                        <Button Command="{Binding Network.StopCommand}" Cursor="Hand" Margin="9,0,0,0">
+                            <Button.Style><Style TargetType="Button">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                                <Setter Property="Template"><Setter.Value>
+                                    <ControlTemplate TargetType="Button">
+                                        <Border Background="Transparent" BorderBrush="{StaticResource Hairline}" BorderThickness="1,0,0,0" Padding="8,0,0,0">
+                                            <TextBlock Text="끊기" FontSize="11" Foreground="#B7BBCE" VerticalAlignment="Center"/>
+                                        </Border>
+                                    </ControlTemplate>
+                                </Setter.Value></Setter>
+                                <Style.Triggers>
+                                    <MultiDataTrigger>
+                                        <MultiDataTrigger.Conditions>
+                                            <Condition Binding="{Binding IsMouseOver, ElementName=StatusPill}" Value="True"/>
+                                            <Condition Binding="{Binding Network.IsActive}" Value="True"/>
+                                        </MultiDataTrigger.Conditions>
+                                        <Setter Property="Visibility" Value="Visible"/>
+                                    </MultiDataTrigger>
+                                </Style.Triggers>
+                            </Style></Button.Style>
+                        </Button>
+                    </StackPanel>
+                </Border>
+
+                <Border HorizontalAlignment="Left" Background="#1B1C26" BorderBrush="{StaticResource Hairline}" BorderThickness="1" CornerRadius="9">
                     <StackPanel Orientation="Horizontal">
                         <Button Content="연결" Command="{Binding SelectConnectCommand}" Style="{StaticResource TabConnect}"/>
                         <Button Content="모니터 배치" Command="{Binding SelectCalibrateCommand}" Style="{StaticResource TabCalibrate}"/>
                         <Button Content="설정" Command="{Binding SelectSettingsCommand}" Style="{StaticResource TabSettings}"/>
                     </StackPanel>
                 </Border>
-            </StackPanel>
+            </DockPanel>
         </Border>
 
         <Grid Grid.Row="1">
@@ -487,5 +546,37 @@
                 </StackPanel>
             </ScrollViewer>
         </Grid>
+
+        <!-- ═══ Toast stack (bottom-right, on top of everything; click = dismiss) ═══ -->
+        <ItemsControl Grid.RowSpan="2" ItemsSource="{Binding Toasts}" Panel.ZIndex="100"
+                      HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,14,14">
+            <ItemsControl.ItemTemplate>
+                <DataTemplate DataType="{x:Type vm:ToastItem}">
+                    <Border Width="276" Background="#191B27" BorderBrush="{StaticResource Hairline}" BorderThickness="1"
+                            CornerRadius="9" Margin="0,8,0,0" Cursor="Hand" MouseLeftButtonDown="Toast_Click">
+                        <Border.Effect><DropShadowEffect Color="#000000" BlurRadius="22" ShadowDepth="4" Opacity="0.5"/></Border.Effect>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Border Grid.Column="0" Width="3" CornerRadius="8,0,0,8">
+                                <Border.Style><Style TargetType="Border">
+                                    <Setter Property="Background" Value="#5FCF8A"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding Kind}" Value="Warn"><Setter Property="Background" Value="#EBA956"/></DataTrigger>
+                                        <DataTrigger Binding="{Binding Kind}" Value="Err"><Setter Property="Background" Value="#E06A6A"/></DataTrigger>
+                                        <DataTrigger Binding="{Binding Kind}" Value="Tip"><Setter Property="Background" Value="#5B87EE"/></DataTrigger>
+                                    </Style.Triggers>
+                                </Style></Border.Style>
+                            </Border>
+                            <StackPanel Grid.Column="1" Margin="11,8,12,9">
+                                <TextBlock Text="{Binding Title}" Foreground="{StaticResource cream}" FontSize="12" FontWeight="SemiBold"/>
+                                <TextBlock Text="{Binding Message}" Foreground="#9A9EAD" FontSize="10.5" TextWrapping="Wrap" Margin="0,2,0,0"/>
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+                </DataTemplate>
+            </ItemsControl.ItemTemplate>
+        </ItemsControl>
     </Grid>
 </Window>

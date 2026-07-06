@@ -1,9 +1,19 @@
+using System.Collections.ObjectModel;
 using System.Windows.Input;
+using System.Windows.Threading;
 using Snapfield.App.Mvvm;
 
 namespace Snapfield.App.ViewModels;
 
 public enum MainTab { Connect, Calibrate, Settings }
+
+/// <summary>One entry in the toast stack (bottom-right of the window).</summary>
+public sealed class ToastItem
+{
+    public string Title { get; init; } = "";
+    public string Message { get; init; } = "";
+    public string Kind { get; init; } = "Ok"; // Ok | Warn | Err | Tip — colors the stripe
+}
 
 /// <summary>
 /// Shell view model for the single main window. Hosts the three tabs — Connect
@@ -22,6 +32,8 @@ public sealed class MainViewModel : ObservableObject
         SelectConnectCommand = new RelayCommand(() => Tab = MainTab.Connect);
         SelectCalibrateCommand = new RelayCommand(() => Tab = MainTab.Calibrate);
         SelectSettingsCommand = new RelayCommand(() => Tab = MainTab.Settings);
+
+        Network.Toast += ShowToast;
 
         // Show a remote's monitors on the calibration plane only while it's connected.
         Network.ConnectedPeers.CollectionChanged += (_, _) =>
@@ -61,6 +73,24 @@ public sealed class MainViewModel : ObservableObject
     public bool IsConnect => _tab == MainTab.Connect;
     public bool IsCalibrate => _tab == MainTab.Calibrate;
     public bool IsSettings => _tab == MainTab.Settings;
+
+    // ── Toast stack ───────────────────────────────────────────────────────────
+    public ObservableCollection<ToastItem> Toasts { get; } = new();
+
+    /// <summary>Add a toast (UI thread only). Auto-dismisses after a few seconds;
+    /// clicking one dismisses it early. The stack is capped so it can't pile up.</summary>
+    public void ShowToast(string title, string message, string kind)
+    {
+        var item = new ToastItem { Title = title, Message = message, Kind = kind };
+        Toasts.Add(item);
+        while (Toasts.Count > 4) Toasts.RemoveAt(0);
+
+        var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(6) };
+        timer.Tick += (_, _) => { timer.Stop(); Toasts.Remove(item); };
+        timer.Start();
+    }
+
+    public void DismissToast(ToastItem item) => Toasts.Remove(item);
 
     public void ShutDown() => Calibration.ShutDown();
 }

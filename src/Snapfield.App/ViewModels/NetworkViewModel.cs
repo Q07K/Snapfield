@@ -103,6 +103,38 @@ public sealed class NetworkViewModel : ObservableObject
     public ObservableCollection<string> ConnectedPeers { get; } = new();
     public bool HasPeers => ConnectedPeers.Count > 0;
 
+    /// <summary>Transient notification for the toast stack: (title, message, kind).
+    /// Kind is one of Ok / Warn / Err / Tip. Always raised on the UI thread.</summary>
+    public event Action<string, string, string>? Toast;
+
+    // ── Global status pill (header, visible on every tab) ────────────────────
+    private string _pillText = "연결 안 됨";
+    public string PillText { get => _pillText; private set => SetField(ref _pillText, value); }
+
+    private string _pillKind = "Off"; // Off | Ok | Live
+    public string PillKind { get => _pillKind; private set => SetField(ref _pillKind, value); }
+
+    private bool _remoteActive;          // engine says the cursor is on a remote machine
+    private string _activeRemoteName = "";
+    private bool _captureTipShown;       // Ctrl×3 tip shows once per app run
+
+    private void UpdatePill()
+    {
+        string text, kind;
+        if (!_isActive) { text = "연결 안 됨"; kind = "Off"; }
+        else if (_mode == NetMode.Receiver)
+        {
+            if (_isBeingControlled) { text = "제어당하는 중"; kind = "Live"; }
+            else { text = "연결 대기 중"; kind = "Ok"; }
+        }
+        else if (_remoteActive) { text = $"원격 조작 중 · {_activeRemoteName}"; kind = "Live"; }
+        else if (ConnectedPeers.Count == 1) { text = $"{ConnectedPeers[0]} 연결됨"; kind = "Ok"; }
+        else if (ConnectedPeers.Count > 1) { text = $"{ConnectedPeers[0]} 외 {ConnectedPeers.Count - 1}대 연결됨"; kind = "Ok"; }
+        else { text = "연결 중 …"; kind = "Off"; }
+        PillText = text;
+        PillKind = kind;
+    }
+
     // ── Page routing ──────────────────────────────────────────────────────────
     private NetMode _mode = NetMode.Choose;
     public NetMode Mode
@@ -193,6 +225,7 @@ public sealed class NetworkViewModel : ObservableObject
         EnsureSession();
         _session!.Listen(Port);
         IsActive = true;
+        UpdatePill();
         SettingsStore.Save(SettingsStore.Load() with { LastRole = "Receiver", LastPort = Port });
     }
 
@@ -205,6 +238,7 @@ public sealed class NetworkViewModel : ObservableObject
         EnsureSession();
         _session!.Connect(host, Port, pin); // adds a peer (hub can hold several)
         IsActive = true;
+        UpdatePill();
         SettingsStore.Save(SettingsStore.Load() with { LastRole = "Controller", LastHost = host, LastPort = Port, ControllerPin = pin });
         Remember(host, Port, pin, host);
     }
@@ -314,8 +348,10 @@ public sealed class NetworkViewModel : ObservableObject
         _session = null;
         IsActive = false;
         IsBeingControlled = false;
+        _remoteActive = false;
         ConnectedPeers.Clear();
         OnPropertyChanged(nameof(HasPeers));
+        UpdatePill();
         Status = "";
         Side = "—";
         Detail = "";
@@ -332,15 +368,33 @@ public sealed class NetworkViewModel : ObservableObject
     private void OnPeersChanged(IReadOnlyList<string> names) =>
         Application.Current?.Dispatcher.BeginInvoke(() =>
         {
+            // Toast the diff. Names are machine ids that only appear post-Hello,
+            // so add/remove maps cleanly to connect/disconnect. A manual Stop()
+            // clears the list directly and never comes through here.
+            var old = ConnectedPeers.ToList();
+            foreach (var n in names.Where(n => !old.Contains(n)))
+                Toast?.Invoke($"{n} 연결됨", "커서를 화면 끝으로 밀어 넘어가세요.", "Ok");
+            foreach (var n in old.Where(o => !names.Contains(o)))
+                Toast?.Invoke($"{n} 연결 끊김", "재연결을 시도합니다 …", "Err");
+
             ConnectedPeers.Clear();
             foreach (var n in names) ConnectedPeers.Add(n);
             OnPropertyChanged(nameof(HasPeers));
+            UpdatePill();
         });
 
     private void OnEngineStatus(EngineStatus s) =>
         Application.Current?.Dispatcher.BeginInvoke(() =>
         {
             var remote = s.Captured || s.ActiveIsRemote;
+            if (remote && !_captureTipShown)
+            {
+                _captureTipShown = true; // the escape hatch matters exactly once — right when it's first needed
+                Toast?.Invoke("원격 조작 시작", "돌아오려면 화면 끝으로 다시 밀거나 Ctrl 키를 3번 연타하세요.", "Tip");
+            }
+            _remoteActive = remote;
+            _activeRemoteName = remote ? s.ActiveMonitor : "";
+            UpdatePill();
             Side = remote ? $"{s.ActiveMonitor} 조작 중" : "이 PC (대기)";
             Detail = $"연결된 기기 {ConnectedPeers.Count}대   ·   ({s.VirtualXMm:0}, {s.VirtualYMm:0} mm)";
             SideBrush = remote
@@ -352,6 +406,7 @@ public sealed class NetworkViewModel : ObservableObject
         Application.Current?.Dispatcher.BeginInvoke(() =>
         {
             IsBeingControlled = true;
+            UpdatePill();
             Side = "제어당하는 중";
             Detail = $"{count}개 이동 수신 · 마지막 픽셀 ({x}, {y})";
             SideBrush = new SolidColorBrush(Color.FromRgb(0x2E, 0xA0, 0x43));

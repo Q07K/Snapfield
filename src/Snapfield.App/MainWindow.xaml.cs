@@ -95,4 +95,10 @@ public partial class MainWindow : Window
     {
         if ((sender as FrameworkElement)?.DataContext is MonitorViewModel m) Cal.RemoveMonitor(m);
     }
+
+    private void Toast_Click(object sender, MouseButtonEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is ToastItem t)
+            ((MainViewModel)DataContext).DismissToast(t);
+    }
 }

@@ -110,8 +110,9 @@ public sealed class TrayManager : IDisposable
     {
         if (_hintShown) return;
         _hintShown = true;
-        _icon.BalloonTipTitle = "Snapfield";
-        _icon.BalloonTipText = "백그라운드에서 계속 실행 중입니다. 종료는 트레이 아이콘 우클릭 → 종료.";
+        // The toast header already says "Snapfield" (exe FileDescription) — don't repeat it.
+        _icon.BalloonTipTitle = "트레이에서 계속 실행 중";
+        _icon.BalloonTipText = "창을 닫아도 연결은 유지됩니다. 종료는 트레이 아이콘 우클릭 → 종료.";
         _icon.ShowBalloonTip(3000);
     }
 

@@ -163,8 +163,8 @@ class MainActivity : Activity() {
             setColor(when (kind) { "live" -> 0xFF5B87EE; "off" -> 0xFF3A3D50; else -> 0xFF5FCF8A }.toInt())
         }
         heroTitle.text = when (kind) {
-            "live" -> "$name이(가) 조작 중"
-            "connected" -> "$name에 연결됨"
+            "live" -> "${name}이(가) 조작 중"
+            "connected" -> "${name}에 연결됨"
             "waiting" -> "연결 대기 중…"
             else -> "수신 꺼짐"
         }

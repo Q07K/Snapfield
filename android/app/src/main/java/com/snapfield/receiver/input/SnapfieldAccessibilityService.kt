@@ -185,8 +185,8 @@ class SnapfieldAccessibilityService : AccessibilityService() {
         if (android.os.Build.VERSION.SDK_INT >= 30) {
             try {
                 takeScreenshot(android.view.Display.DEFAULT_DISPLAY, mainExecutor,
-                    object : TakeScreenshotCallback {
-                        override fun onSuccess(result: ScreenshotResult) {
+                    object : android.accessibilityservice.AccessibilityService.TakeScreenshotCallback {
+                        override fun onSuccess(result: android.accessibilityservice.AccessibilityService.ScreenshotResult) {
                             var png: ByteArray? = null
                             try {
                                 val hw = android.graphics.Bitmap.wrapHardwareBuffer(

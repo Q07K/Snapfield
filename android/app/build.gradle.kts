@@ -22,13 +22,16 @@ android {
     // updating over them needs an uninstall first.
     signingConfigs {
         create("release") {
-            val ks = System.getenv("ANDROID_KEYSTORE_FILE")
+            // CI env from an unset GitHub secret is an EMPTY STRING, not null —
+            // treat blank as absent or the alias/password silently break.
+            fun env(name: String) = System.getenv(name)?.takeIf { it.isNotBlank() }
+            val ks = env("ANDROID_KEYSTORE_FILE")
             if (ks != null) {
                 storeFile = file(ks)
-                storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
-                keyAlias = System.getenv("ANDROID_KEY_ALIAS") ?: "snapfield"
-                keyPassword = System.getenv("ANDROID_KEY_PASSWORD")
-                    ?: System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                storeType = "pkcs12"
+                storePassword = env("ANDROID_KEYSTORE_PASSWORD")
+                keyAlias = env("ANDROID_KEY_ALIAS") ?: "snapfield"
+                keyPassword = env("ANDROID_KEY_PASSWORD") ?: env("ANDROID_KEYSTORE_PASSWORD")
             }
         }
     }

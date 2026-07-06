@@ -38,17 +38,22 @@ jobs:
         shell: bash
         env:
           KS_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
         run: |
           if [ -n "$KS_B64" ]; then
             # The pasted secret may carry CR/LF/spaces — strip before decoding.
             printf '%s' "$KS_B64" | tr -d '[:space:]' | base64 -d > "$RUNNER_TEMP/snapfield.keystore"
             echo "ANDROID_KEYSTORE_FILE=$RUNNER_TEMP/snapfield.keystore" >> "$GITHUB_ENV"
+            # A Windows-exported PFX names its key with a GUID, not a chosen
+            # alias — ask the store itself instead of guessing.
+            alias=$(keytool -list -keystore "$RUNNER_TEMP/snapfield.keystore" -storepass "$KS_PASS" -storetype pkcs12 2>/dev/null \
+              | awk -F',' '/PrivateKeyEntry/ {gsub(/^[ \t]+/, "", $1); print $1; exit}')
+            if [ -n "$alias" ]; then echo "ANDROID_KEY_ALIAS=$alias" >> "$GITHUB_ENV"; fi
           fi
 
       - name: Build APK
         env:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         run: gradle -p android assembleRelease -PversionName=ci-${{ github.run_number }} -PversionCode=${{ github.run_number }}
 
       - name: Upload APK artifact

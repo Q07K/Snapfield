@@ -66,6 +66,8 @@ public partial class MainWindow : Window
     private void Surface_SizeChanged(object sender, SizeChangedEventArgs e) =>
         Cal.UpdateViewport(e.NewSize.Width, e.NewSize.Height);
 
+    private System.Windows.Threading.DispatcherTimer? _seamLinger;
+
     private void Monitor_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
         var el = (FrameworkElement)sender;
@@ -78,6 +80,8 @@ public partial class MainWindow : Window
         _dragStartXMm = monitor.XMm;
         _dragStartYMm = monitor.YMm;
         el.CaptureMouse();
+        _seamLinger?.Stop();
+        Cal.SetSeamsVisible(true); // crossing bands appear only while arranging
     }
 
     // ── Canvas zoom & pan ─────────────────────────────────────────────────────
@@ -135,6 +139,15 @@ public partial class MainWindow : Window
         _dragging = null;
         Cal.UpdateViewport(Surface.ActualWidth, Surface.ActualHeight);
         Cal.AutoSave(); // persist the arrangement silently — no Save button needed
+
+        // Let the result linger a beat, then return to a quiet canvas.
+        _seamLinger?.Stop();
+        _seamLinger = new System.Windows.Threading.DispatcherTimer
+        {
+            Interval = TimeSpan.FromSeconds(1.2),
+        };
+        _seamLinger.Tick += (_, _) => { _seamLinger?.Stop(); Cal.SetSeamsVisible(false); };
+        _seamLinger.Start();
     }
 
     private void ToggleKind_Click(object sender, RoutedEventArgs e)

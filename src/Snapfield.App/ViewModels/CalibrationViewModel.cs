@@ -262,6 +262,18 @@ public sealed class CalibrationViewModel : ObservableObject
     // ── Seam flow markers ────────────────────────────────────────────────────
     // Where the cursor crosses between machines: flow arrows on direct bands,
     // ✕ marks where the neighbour has no facing edge (entry gets clamped there).
+    // QUIET BY DEFAULT: markers only show while a monitor is being dragged —
+    // that's when the information matters, and small phone cards stay unobscured
+    // the rest of the time.
+
+    private bool _seamsVisible;
+    public bool SeamsVisible { get => _seamsVisible; private set => SetField(ref _seamsVisible, value); }
+
+    public void SetSeamsVisible(bool visible)
+    {
+        SeamsVisible = visible;
+        if (visible) RefreshSeams(force: true);
+    }
 
     /// <summary>One marker on the canvas (top-left position, pre-centred).</summary>
     public sealed class SeamMarker

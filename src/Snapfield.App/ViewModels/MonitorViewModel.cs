@@ -111,6 +111,17 @@ public sealed class MonitorViewModel : ObservableObject
     public double CanvasWidth => WidthMm * _owner.Scale;
     public double CanvasHeight => HeightMm * _owner.Scale;
 
+    // ── Size-adaptive card content ───────────────────────────────────────────
+    // A phone card has no room for five lines of text — small cards show just
+    // the name (scaled up, readable), and detail returns as you zoom in. The
+    // full spec always lives in the tooltip and the inspector.
+    public bool ShowResolution => CanvasWidth >= 64 && CanvasHeight >= 56;
+    public bool ShowMeta => CanvasWidth >= 110 && CanvasHeight >= 84;
+
+    /// <summary>Hover tooltip: the whole spec, independent of card size.</summary>
+    public string Summary =>
+        $"{MachineLabel} · {KindLabel}\n{ResolutionText} · {PhysicalText} · {DiagonalText}";
+
     // ── Labels ───────────────────────────────────────────────────────────────
     public string ResolutionText => $"{PixelWidth} × {PixelHeight}";
     public string PhysicalText => $"{WidthMm:0} × {HeightMm:0} mm";
@@ -153,6 +164,8 @@ public sealed class MonitorViewModel : ObservableObject
         OnPropertyChanged(nameof(CanvasTop));
         OnPropertyChanged(nameof(CanvasWidth));
         OnPropertyChanged(nameof(CanvasHeight));
+        OnPropertyChanged(nameof(ShowResolution));
+        OnPropertyChanged(nameof(ShowMeta));
     }
 
     /// <summary>Move to a new physical position (mm), applying edge snapping to neighbours.</summary>

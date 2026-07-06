@@ -534,9 +534,21 @@
                         <Button DockPanel.Dock="Left" Content="프리셋 ▾" Click="PresetMenu_Click" Margin="7,0,0,0"
                                 Visibility="{Binding IsEditable, Converter={StaticResource B2V}}"/>
                         <TextBlock DockPanel.Dock="Left" VerticalAlignment="Center" FontSize="11" Margin="12,0,0,0">
+                            <TextBlock.Style><Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                                <Style.Triggers><DataTrigger Binding="{Binding SeamsVisible}" Value="True">
+                                    <Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers>
+                            </Style></TextBlock.Style>
                             <Run Text="‹·›" FontFamily="Consolas" FontWeight="Bold" Foreground="#5FCF8A"/><Run Text=" 커서 통과 구간" Foreground="#5B6070"/>
-                            <Run Text="   ✕" Foreground="#E06A6A"/><Run Text=" 상대 화면 밖 (가장자리로 보정됨)" Foreground="#5B6070"/>
-                            <Run Text="   휠 = 확대" Foreground="#3F4354"/>
+                            <Run Text="   ✕" Foreground="#E06A6A"/><Run Text=" 상대 화면 밖" Foreground="#5B6070"/>
+                        </TextBlock>
+                        <TextBlock DockPanel.Dock="Left" Text="휠 = 확대 · 드래그하면 통과 구간 표시" Foreground="#3F4354"
+                                   FontSize="11" VerticalAlignment="Center" Margin="12,0,0,0">
+                            <TextBlock.Style><Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Visible"/>
+                                <Style.Triggers><DataTrigger Binding="{Binding SeamsVisible}" Value="True">
+                                    <Setter Property="Visibility" Value="Collapsed"/></DataTrigger></Style.Triggers>
+                            </Style></TextBlock.Style>
                         </TextBlock>
                         <TextBlock DockPanel.Dock="Left" Text="{Binding ZoomText}" Foreground="#9A9EAD" FontSize="11"
                                    VerticalAlignment="Center" Margin="14,0,0,0"
@@ -644,6 +656,7 @@
                     <ItemsControl.ItemTemplate>
                         <DataTemplate DataType="{x:Type vm:MonitorViewModel}">
                             <Grid Width="{Binding CanvasWidth}" Height="{Binding CanvasHeight}" Cursor="SizeAll"
+                                  ToolTip="{Binding Summary}"
                                   MouseLeftButtonDown="Monitor_MouseLeftButtonDown" MouseMove="Monitor_MouseMove" MouseLeftButtonUp="Monitor_MouseLeftButtonUp">
                                 <Grid.ContextMenu>
                                     <ContextMenu>
@@ -686,17 +699,25 @@
                                     </Style></Border.Style>
                                     <Grid>
                                         <Border CornerRadius="4" Background="{StaticResource screen}">
+                                            <!-- size-adaptive: small cards show just the name (big and
+                                                 readable); detail returns as the card/zoom grows. Full
+                                                 spec is always in the tooltip and the inspector. -->
                                             <Viewbox Margin="8,7" MaxHeight="104">
-                                                <StackPanel>
-                                                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,0,0,1">
+                                                <StackPanel MaxWidth="170">
+                                                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,0,0,1"
+                                                                Visibility="{Binding ShowMeta, Converter={StaticResource B2V}}">
                                                         <TextBlock Text="{Binding MachineLabel}" Foreground="#9DB4E8" FontSize="8.5"/>
                                                         <TextBlock Text=" · " Foreground="#565A6E" FontSize="8.5"/>
                                                         <TextBlock Text="{Binding KindLabel}" Foreground="#8A8FA4" FontSize="8.5"/>
                                                     </StackPanel>
-                                                    <TextBlock Text="{Binding DisplayName}" Foreground="{StaticResource cream}" FontWeight="SemiBold" HorizontalAlignment="Center"/>
-                                                    <TextBlock Text="{Binding ResolutionText}" Foreground="{StaticResource creamDim}" HorizontalAlignment="Center"/>
-                                                    <TextBlock Text="{Binding PhysicalText}" Foreground="{StaticResource creamFaint}" HorizontalAlignment="Center"/>
-                                                    <TextBlock Text="{Binding DiagonalText}" Foreground="#6E7286" HorizontalAlignment="Center"/>
+                                                    <TextBlock Text="{Binding DisplayName}" Foreground="{StaticResource cream}" FontWeight="SemiBold"
+                                                               HorizontalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                                                    <TextBlock Text="{Binding ResolutionText}" Foreground="{StaticResource creamDim}" HorizontalAlignment="Center"
+                                                               Visibility="{Binding ShowResolution, Converter={StaticResource B2V}}"/>
+                                                    <TextBlock Text="{Binding PhysicalText}" Foreground="{StaticResource creamFaint}" HorizontalAlignment="Center"
+                                                               Visibility="{Binding ShowMeta, Converter={StaticResource B2V}}"/>
+                                                    <TextBlock Text="{Binding DiagonalText}" Foreground="#6E7286" HorizontalAlignment="Center"
+                                                               Visibility="{Binding ShowMeta, Converter={StaticResource B2V}}"/>
                                                 </StackPanel>
                                             </Viewbox>
                                         </Border>
@@ -712,8 +733,9 @@
                 </ItemsControl>
 
                 <!-- seam flow overlay: where the cursor crosses between machines.
-                     Draw-only (no hit testing) so drags pass straight through. -->
-                <ItemsControl ItemsSource="{Binding ArrowMarkers}" IsHitTestVisible="False">
+                     Draw-only (no hit testing), and QUIET: only while dragging. -->
+                <ItemsControl ItemsSource="{Binding ArrowMarkers}" IsHitTestVisible="False"
+                              Visibility="{Binding SeamsVisible, Converter={StaticResource B2V}}">
                     <ItemsControl.ItemsPanel><ItemsPanelTemplate><Canvas/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
                     <ItemsControl.ItemContainerStyle>
                         <Style TargetType="ContentPresenter">
@@ -746,7 +768,8 @@
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>
-                <ItemsControl ItemsSource="{Binding BlockMarkers}" IsHitTestVisible="False">
+                <ItemsControl ItemsSource="{Binding BlockMarkers}" IsHitTestVisible="False"
+                              Visibility="{Binding SeamsVisible, Converter={StaticResource B2V}}">
                     <ItemsControl.ItemsPanel><ItemsPanelTemplate><Canvas/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
                     <ItemsControl.ItemContainerStyle>
                         <Style TargetType="ContentPresenter">

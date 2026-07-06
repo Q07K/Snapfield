@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Snapfield</string>
+    <string name="accessibility_desc">PC에서 넘어온 커서를 화면에 표시하고 탭·드래그·스크롤을 대신 수행합니다. Snapfield 수신 기능에만 사용됩니다.</string>
 </resources>

@@ -1,9 +1,9 @@
 name: Android
 
 # Builds the receiver APK whenever the android/ tree changes, so the scaffold
-# stays green without waiting for a release tag. The APK lands as a workflow
-# artifact (debug-key signed — installable, but updating over a differently
-# signed build needs an uninstall first).
+# stays green without waiting for a release tag. Signs with the repo keystore
+# when the secrets exist (same signature as releases — artifact APKs update
+# over installed ones), else falls back to a debug key.
 on:
   push:
     branches: [main]
@@ -34,7 +34,20 @@ jobs:
         with:
           gradle-version: '8.7'
 
+      - name: Prepare signing (optional)
+        shell: bash
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$KS_B64" ]; then
+            echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/snapfield.keystore"
+            echo "ANDROID_KEYSTORE_FILE=$RUNNER_TEMP/snapfield.keystore" >> "$GITHUB_ENV"
+          fi
+
       - name: Build APK
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         run: gradle -p android assembleRelease -PversionName=ci-${{ github.run_number }} -PversionCode=${{ github.run_number }}
 
       - name: Upload APK artifact

@@ -112,7 +112,7 @@ class ReceiverService : Service() {
                 setStatus("조작 기기가 이 화면을 떠났습니다.")
             }
             MsgType.Clipboard -> msg.text?.let { applyClipboard(it) }
-            MsgType.Key -> { /* keyboard needs the IME route — next milestone */ }
+            MsgType.Key -> com.snapfield.receiver.input.SnapfieldImeService.instance?.onKey(msg.vk, msg.down)
             else -> { /* Layout / images / files: not consumed on Android yet */ }
         }
     }

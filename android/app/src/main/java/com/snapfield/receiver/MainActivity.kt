@@ -9,6 +9,7 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.util.TypedValue
+import android.view.inputmethod.InputMethodManager
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -25,6 +26,7 @@ class MainActivity : Activity() {
     private lateinit var status: TextView
     private lateinit var startButton: Button
     private lateinit var accessibilityButton: Button
+    private lateinit var keyboardButton: Button
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -58,13 +60,27 @@ class MainActivity : Activity() {
         }
         root.addView(accessibilityButton.withTopMargin(dp(8)))
 
+        // Keyboard: tapping either enables the IME (settings) or switches to it
+        // (picker), depending on where the user is in the two-step setup.
+        keyboardButton = Button(this).apply {
+            setOnClickListener {
+                if (isImeEnabled()) {
+                    (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).showInputMethodPicker()
+                } else {
+                    startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS))
+                }
+            }
+        }
+        root.addView(keyboardButton.withTopMargin(dp(8)))
+
         status = text("", 12f, 0xFF7E8296)
         root.addView(status.withTopMargin(dp(14)))
 
         root.addView(text(
             "PC의 배치 탭에서 이 기기를 모니터처럼 원하는 자리에 놓으세요.\n" +
-                "커서가 화면 경계를 넘어 들어오면 탭·드래그·스크롤이 동작합니다.\n" +
-                "(키보드 입력은 다음 단계에서 지원됩니다)",
+                "커서가 화면 경계를 넘어 들어오면 탭·드래그·스크롤이 동작합니다.\n\n" +
+                "키보드를 쓰려면: ①'Snapfield 키보드'를 켜고 ②입력할 때 " +
+                "'Snapfield 키보드'로 전환하세요. (화면 키보드는 사라지고 PC에서만 입력됩니다)",
             11f, 0xFF5B6070,
         ).withTopMargin(dp(18)))
 
@@ -92,7 +108,22 @@ class MainActivity : Activity() {
         accessibilityButton.text =
             if (SnapfieldAccessibilityService.isEnabled) "접근성 권한 켜짐 ✓"
             else "접근성 권한 켜기 (커서·탭에 필요)"
+        keyboardButton.text = when {
+            isImeSelected() -> "Snapfield 키보드 사용 중 ✓"
+            isImeEnabled() -> "입력할 땐 'Snapfield 키보드'로 전환"
+            else -> "Snapfield 키보드 켜기 (키보드 입력에 필요)"
+        }
         status.text = statusText
+    }
+
+    private fun isImeEnabled(): Boolean {
+        val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
+        return imm.enabledInputMethodList.any { it.packageName == packageName }
+    }
+
+    private fun isImeSelected(): Boolean {
+        val current = Settings.Secure.getString(contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD)
+        return current?.startsWith(packageName) == true
     }
 
     // ── tiny view helpers (no layout XML, no dependencies) ───────────────────

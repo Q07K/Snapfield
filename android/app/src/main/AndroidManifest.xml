@@ -42,5 +42,18 @@
                 android:name="android.accessibilityservice"
                 android:resource="@xml/accessibility_config" />
         </service>
+
+        <!-- Keyboard: a screenless IME that types forwarded PC keys. -->
+        <service
+            android:name=".input.SnapfieldImeService"
+            android:exported="true"
+            android:permission="android.permission.BIND_INPUT_METHOD">
+            <intent-filter>
+                <action android:name="android.view.InputMethod" />
+            </intent-filter>
+            <meta-data
+                android:name="android.view.im"
+                android:resource="@xml/ime_config" />
+        </service>
     </application>
 </manifest>

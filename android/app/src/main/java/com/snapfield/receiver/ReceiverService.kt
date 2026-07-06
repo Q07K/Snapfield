@@ -39,6 +39,10 @@ class ReceiverService : Service() {
         @Volatile var listener: ((String) -> Unit)? = null
         @Volatile var instance: ReceiverService? = null
 
+        /** Hero state for the UI: off / waiting / connected / live (being driven). */
+        @Volatile var stateKind = "off"
+        @Volatile var controllerName: String? = null
+
         fun start(context: Context) {
             context.startForegroundService(Intent(context, ReceiverService::class.java))
         }
@@ -60,12 +64,14 @@ class ReceiverService : Service() {
         instance = this
         startForeground(1, buildNotification())
         running = true
+        stateKind = "waiting"
         beacon = Beacon(deviceName(), PORT).also { it.start() }
         listen()
         // Fires on every copy; the read itself only succeeds while we're allowed
         // (foreground, or the Snapfield keyboard is the selected IME).
         (getSystemService(CLIPBOARD_SERVICE) as ClipboardManager)
             .addPrimaryClipChangedListener(clipChanged)
+        applyKeepAwake()
         setStatus("연결 대기 중 — 포트 $PORT")
     }
 
@@ -79,10 +85,24 @@ class ReceiverService : Service() {
         } catch (_: Exception) {}
         beacon?.stop()
         link?.close()
+        stateKind = "off"
+        controllerName = null
         SnapfieldAccessibilityService.instance?.hideCursor()
+        SnapfieldAccessibilityService.instance?.setKeepAwake(false)
         setStatus("중지됨")
         super.onDestroy()
     }
+
+    /** Keep-awake policy: always-mode holds while running; controlled-mode only
+    /// while the PC cursor is on this device. */
+    private fun applyKeepAwake() {
+        val on = Prefs.keepAwakeAlways(this) ||
+            (Prefs.keepAwakeControlled(this) && stateKind == "live")
+        SnapfieldAccessibilityService.instance?.setKeepAwake(on)
+    }
+
+    /** Called from the UI when a keep-awake switch flips. */
+    fun refreshKeepAwake() = applyKeepAwake()
 
     // ── session ───────────────────────────────────────────────────────────────
     private fun listen() {
@@ -96,6 +116,9 @@ class ReceiverService : Service() {
             onDisconnected = { reason ->
                 SnapfieldAccessibilityService.instance?.hideCursor()
                 if (disposed) return@PeerLink
+                stateKind = "waiting"
+                controllerName = null
+                applyKeepAwake()
                 if (reason.startsWith("AUTH:")) setStatus("연결 코드가 일치하지 않습니다. 계속 대기합니다.")
                 else setStatus("연결 끊김: $reason — 다시 대기합니다.")
                 main.postDelayed({ listen() }, 500L)
@@ -109,17 +132,23 @@ class ReceiverService : Service() {
                 // Controller identified itself (pin already verified by the
                 // handshake) — answer with this device's screen.
                 link?.send(NetMessage.hello(deviceName(), listOf(screenAsMonitor())))
+                stateKind = "connected"
+                controllerName = msg.machineId
                 setStatus("'${msg.machineId ?: "controller"}'에 연결됨. 제어 대기 중.")
             }
             MsgType.CursorMove -> SnapfieldAccessibilityService.instance?.moveCursor(msg.x, msg.y)
             MsgType.MouseButton -> if (msg.button == 0) SnapfieldAccessibilityService.instance?.onButton(msg.down)
             MsgType.MouseWheel -> SnapfieldAccessibilityService.instance?.onWheel(msg.wheelDelta, msg.horizontal)
             MsgType.ControlEnter -> {
+                stateKind = "live"
                 SnapfieldAccessibilityService.instance?.showCursor()
+                applyKeepAwake() // the screen must not sleep under the PC cursor
                 setStatus("조작 기기가 이 화면을 넘겨받았습니다.")
             }
             MsgType.ControlLeave -> {
+                stateKind = "connected"
                 SnapfieldAccessibilityService.instance?.hideCursor()
+                applyKeepAwake()
                 setStatus("조작 기기가 이 화면을 떠났습니다.")
             }
             MsgType.Clipboard -> msg.text?.let { applyClipboard(it) }

@@ -49,6 +49,7 @@ class SnapfieldAccessibilityService : AccessibilityService() {
 
     override fun onDestroy() {
         instance = null
+        setKeepAwake(false)
         main.post { removeCursor() }
         super.onDestroy()
     }
@@ -81,6 +82,31 @@ class SnapfieldAccessibilityService : AccessibilityService() {
     }
 
     fun hideCursor() = main.post { removeCursor() }
+
+    // ── keep-awake (screen-off breaks gestures) ───────────────────────────────
+    // An invisible 1px overlay carrying FLAG_KEEP_SCREEN_ON: no WakeLock, no
+    // extra permission, and it can't wake an already-off screen — it just stops
+    // the timeout while the PC is (or may be) driving this device.
+    private var keepAwakeView: android.view.View? = null
+
+    fun setKeepAwake(on: Boolean) = main.post {
+        val wm = windowManager ?: return@post
+        if (on && keepAwakeView == null) {
+            val v = android.view.View(this)
+            val params = WindowManager.LayoutParams(
+                1, 1,
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                    or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                    or WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON,
+                PixelFormat.TRANSLUCENT,
+            ).apply { gravity = Gravity.TOP or Gravity.START }
+            try { wm.addView(v, params); keepAwakeView = v } catch (_: Exception) {}
+        } else if (!on) {
+            keepAwakeView?.let { try { wm.removeView(it) } catch (_: Exception) {} }
+            keepAwakeView = null
+        }
+    }
 
     private fun removeCursor() {
         val view = cursor ?: return

@@ -29,6 +29,37 @@ public class CursorRouterTests
         new("A", new DesktopLayout(new[] { Local(), Remote() }));
 
     [Fact]
+    public void CapturedTraversal_CrossesRemoteToRemote_AcrossACalibrationGap()
+    {
+        // The two-phones-side-by-side layout: laptop, then phone B, then phone C
+        // with a small calibration gap between the phones. Reaching C means a
+        // remote→remote hop while captured — OnDelta must bridge the gap the
+        // same way the local-edge handoff does.
+        var local = Local(); // 0..597.6 mm
+        var phoneB = new MonitorInfo
+        {
+            MachineId = "B", DeviceId = "B-phone",
+            PixelBounds = new PixelRect(0, 0, 1080, 2400),
+            PhysicalBounds = new PhysicalRect(597.6, 0, 64, 142),
+        };
+        var phoneC = new MonitorInfo
+        {
+            MachineId = "C", DeviceId = "C-phone",
+            PixelBounds = new PixelRect(0, 0, 1440, 3200),
+            PhysicalBounds = new PhysicalRect(597.6 + 64 + 8, 0, 71, 158), // 8 mm of daylight
+        };
+        var r = new CursorRouter("A", new DesktopLayout(new[] { local, phoneB, phoneC }));
+        r.SeatLocal(1920, 1080);
+        r.OnLocalAbsolute(3839, 100); // hand off onto phone B
+
+        // Slow push rightwards: small deltas must NOT stick at B's right edge.
+        RouteResult last = default;
+        for (var i = 0; i < 40; i++) last = r.OnDelta(2, 0);
+
+        Assert.Equal("C", last.Owner!.MachineId);
+    }
+
+    [Fact]
     public void JumpToMachine_SeatsVirtualCursorOnRemoteCentre_AndBack()
     {
         var r = Router();

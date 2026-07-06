@@ -172,6 +172,15 @@ public sealed class CursorRouter
     {
         var p = new PhysicalPoint(Virtual.XMm + dxMm, Virtual.YMm + dyMm);
         var owner = _mapper.HitTest(p);
+        if (owner is null && Active is not null)
+        {
+            // Pushing off the active monitor into a calibration gap: bridge to
+            // the neighbour beyond that edge, exactly like the local-edge
+            // handoff does. Without this, remote→remote seams with any daylight
+            // stuck the cursor — while the canvas arrows promised they cross.
+            owner = BridgeAcrossGap(Active, p, dxMm, dyMm);
+            if (owner is not null) p = owner.PhysicalBounds.Clamp(p);
+        }
         if (owner is null)
         {
             // In a gap or off-plane: keep the cursor pinned to the nearest monitor.
@@ -252,11 +261,35 @@ public sealed class CursorRouter
     }
 
     /// <summary>
+    /// Captured-traversal gap bridge: when the virtual cursor leaves the active
+    /// monitor into empty plane, find the monitor (ANY machine — the way home is
+    /// across gaps too) just beyond the exit edge, within the seam gap.
+    /// </summary>
+    private MonitorInfo? BridgeAcrossGap(MonitorInfo from, PhysicalPoint p, double dxMm, double dyMm)
+    {
+        var fb = from.PhysicalBounds;
+        // Which edge did the movement push through? Pick by exit direction.
+        Edge? edge =
+            p.XMm >= fb.Right && dxMm > 0 ? Edge.Right :
+            p.XMm <= fb.XMm && dxMm < 0 ? Edge.Left :
+            p.YMm >= fb.Bottom && dyMm > 0 ? Edge.Down :
+            p.YMm <= fb.YMm && dyMm < 0 ? Edge.Up :
+            null;
+        if (edge is null) return null;
+
+        var along = edge is Edge.Right or Edge.Left ? p.YMm : p.XMm;
+        return NearestBeyond(from, edge.Value, along, anyMachine: true);
+    }
+
+    /// <summary>
     /// The remote monitor lying just beyond the given edge (within <see cref="SeamGapMm"/>),
     /// closest to the cursor's position along the edge. Lets the cursor cross by
     /// hitting the edge anywhere near the remote, not only where it's perfectly aligned.
     /// </summary>
-    private MonitorInfo? NearestRemoteBeyond(MonitorInfo local, Edge edge, double along)
+    private MonitorInfo? NearestRemoteBeyond(MonitorInfo local, Edge edge, double along) =>
+        NearestBeyond(local, edge, along, anyMachine: false);
+
+    private MonitorInfo? NearestBeyond(MonitorInfo local, Edge edge, double along, bool anyMachine)
     {
         var lb = local.PhysicalBounds;
         MonitorInfo? best = null;
@@ -264,7 +297,8 @@ public sealed class CursorRouter
 
         foreach (var m in _layout.Monitors)
         {
-            if (m.MachineId == _localMachineId || ReferenceEquals(m, local)) continue;
+            if (ReferenceEquals(m, local)) continue;
+            if (!anyMachine && m.MachineId == _localMachineId) continue;
             var rb = m.PhysicalBounds;
 
             bool beyond = edge switch

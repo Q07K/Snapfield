@@ -175,10 +175,41 @@ class SnapfieldAccessibilityService : AccessibilityService() {
     }
 
     // ── global actions (mapped from PC keys) ──────────────────────────────────
-    /** PrtScn on the PC → a real screenshot on the phone (Android 9+). */
-    fun takeScreenshot() = main.post {
-        if (android.os.Build.VERSION.SDK_INT >= 28)
-            try { performGlobalAction(GLOBAL_ACTION_TAKE_SCREENSHOT) } catch (_: Exception) {}
+    /**
+     * PrtScn on the PC: capture this screen and hand back PNG bytes, so the
+     * caller can drop it onto the PC clipboard — the same semantics as PrtScn
+     * on Windows. Android 11+ has a direct accessibility screenshot API; older
+     * devices fall back to the system screenshot (gallery only, null callback).
+     */
+    fun captureScreenPng(onPng: (ByteArray?) -> Unit) = main.post {
+        if (android.os.Build.VERSION.SDK_INT >= 30) {
+            try {
+                takeScreenshot(android.view.Display.DEFAULT_DISPLAY, mainExecutor,
+                    object : TakeScreenshotCallback {
+                        override fun onSuccess(result: ScreenshotResult) {
+                            var png: ByteArray? = null
+                            try {
+                                val hw = android.graphics.Bitmap.wrapHardwareBuffer(
+                                    result.hardwareBuffer, result.colorSpace)
+                                val bmp = hw?.copy(android.graphics.Bitmap.Config.ARGB_8888, false)
+                                result.hardwareBuffer.close()
+                                if (bmp != null) {
+                                    val out = java.io.ByteArrayOutputStream()
+                                    bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
+                                    png = out.toByteArray()
+                                }
+                            } catch (_: Exception) {}
+                            onPng(png)
+                        }
+
+                        override fun onFailure(errorCode: Int) = onPng(null)
+                    })
+            } catch (_: Exception) { onPng(null) }
+        } else {
+            if (android.os.Build.VERSION.SDK_INT >= 28)
+                try { performGlobalAction(GLOBAL_ACTION_TAKE_SCREENSHOT) } catch (_: Exception) {}
+            onPng(null)
+        }
     }
 
     /** Win key on the PC → the phone's home. */

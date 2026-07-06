@@ -30,6 +30,14 @@
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
+        <!-- Clipboard images arrive as URIs on Android — this serves the last
+             PNG the PC sent; the system clipboard brokers read access. -->
+        <provider
+            android:name=".ClipImageProvider"
+            android:authorities="com.snapfield.receiver.clip"
+            android:exported="false"
+            android:grantUriPermissions="true" />
+
         <!-- Injection: overlay cursor + tap/drag/scroll gestures. -->
         <service
             android:name=".input.SnapfieldAccessibilityService"

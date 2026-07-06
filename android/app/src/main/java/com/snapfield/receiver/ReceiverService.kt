@@ -152,15 +152,14 @@ class ReceiverService : Service() {
                 setStatus("조작 기기가 이 화면을 떠났습니다.")
             }
             MsgType.Clipboard -> msg.text?.let { applyClipboard(it) }
+            MsgType.ClipboardImage -> msg.text?.let { applyClipboardImage(it) }
             MsgType.Key -> when {
-                // Keys that mean something device-wide, not per-field:
-                msg.vk == 0x2C && msg.down -> // PrtScn → phone screenshot
-                    SnapfieldAccessibilityService.instance?.takeScreenshot()
+                msg.vk == 0x2C && msg.down -> capturePrtScn() // PrtScn → this screen onto the PC clipboard
                 (msg.vk == 0x5B || msg.vk == 0x5C) && msg.down -> // Win → home
                     SnapfieldAccessibilityService.instance?.goHome()
                 else -> com.snapfield.receiver.input.SnapfieldImeService.instance?.onKey(msg.vk, msg.down)
             }
-            else -> { /* Layout / images / files: not consumed on Android yet */ }
+            else -> { /* Layout / files: not consumed on Android yet */ }
         }
     }
 
@@ -205,22 +204,46 @@ class ReceiverService : Service() {
     // Snapfield keyboard is selected or our activity is up. We also retry at
     // those moments (IME session start / activity resume) to catch copies that
     // happened while reading was blocked.
-    @Volatile private var lastApplied = "" // last text we wrote (came from the PC)
-    @Volatile private var lastSent = ""    // last text we shipped to the PC
+    @Volatile private var lastApplied = ""    // last text we wrote (came from the PC)
+    @Volatile private var lastSent = ""       // last text we shipped to the PC
+    @Volatile private var lastImageMd5 = ""   // last image applied OR sent (both directions)
 
     private val clipChanged = ClipboardManager.OnPrimaryClipChangedListener { trySyncClipboard() }
 
-    /** Reads the clipboard if Android lets us right now, and ships new text to the PC. */
+    /** Reads the clipboard if Android lets us right now, and ships new content
+    /// (image URI or text) to the PC. */
     fun trySyncClipboard() = main.post {
         try {
             val cm = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
-            val text = cm.primaryClip?.getItemAt(0)?.coerceToText(this)?.toString() ?: return@post
+            val item = cm.primaryClip?.getItemAt(0) ?: return@post
+            val uri = item.uri
+            if (uri != null) { syncImage(uri); return@post }
+            val text = item.coerceToText(this)?.toString() ?: return@post
             if (text.isEmpty() || text.length > 500_000) return@post
             if (text == lastApplied || text == lastSent) return@post // echo guard, same as desktop
             lastSent = text
             link?.send(NetMessage(type = MsgType.Clipboard, text = text))
             setStatus("클립보드 전송 (${text.length}자)")
         } catch (_: Exception) { /* read blocked right now — the next window will catch it */ }
+    }
+
+    /** Clipboard image (a content URI) → PNG → the PC clipboard. */
+    private fun syncImage(uri: android.net.Uri) {
+        try {
+            val bmp = contentResolver.openInputStream(uri)?.use {
+                android.graphics.BitmapFactory.decodeStream(it)
+            } ?: return
+            val out = java.io.ByteArrayOutputStream()
+            bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
+            val png = out.toByteArray()
+            if (png.size > 8 * 1024 * 1024) { setStatus("이미지가 너무 큽니다(>8MB) — 전송 생략."); return }
+            val md5 = md5(png)
+            if (md5 == lastImageMd5) return // it's the image we just applied/sent
+            lastImageMd5 = md5
+            link?.send(NetMessage(type = MsgType.ClipboardImage,
+                text = android.util.Base64.encodeToString(png, android.util.Base64.NO_WRAP)))
+            setStatus("클립보드 이미지 전송 (${png.size / 1024}KB)")
+        } catch (_: Exception) { /* unreadable image — skip */ }
     }
 
     private fun applyClipboard(text: String) = main.post {
@@ -231,6 +254,33 @@ class ReceiverService : Service() {
             setStatus("클립보드 수신 (${text.length}자)")
         } catch (_: Exception) { /* background clipboard write refused on some ROMs */ }
     }
+
+    /** PC clipboard image → PNG file → our provider URI on the phone clipboard. */
+    private fun applyClipboardImage(b64: String) = main.post {
+        try {
+            val png = android.util.Base64.decode(b64, android.util.Base64.DEFAULT)
+            lastImageMd5 = md5(png) // the change listener must not bounce it back
+            ClipImageProvider.file(this).writeBytes(png)
+            val cm = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+            cm.setPrimaryClip(ClipData.newUri(contentResolver, "Snapfield", ClipImageProvider.URI))
+            setStatus("클립보드 이미지 수신 (${png.size / 1024}KB) — 붙여넣기 가능")
+        } catch (_: Exception) { /* decode/write failed — skip */ }
+    }
+
+    /** PrtScn: capture this screen and put it on the PC clipboard (Windows semantics). */
+    private fun capturePrtScn() {
+        SnapfieldAccessibilityService.instance?.captureScreenPng { png ->
+            if (png == null || png.size > 8 * 1024 * 1024) return@captureScreenPng
+            lastImageMd5 = md5(png)
+            link?.send(NetMessage(type = MsgType.ClipboardImage,
+                text = android.util.Base64.encodeToString(png, android.util.Base64.NO_WRAP)))
+            setStatus("화면 캡처를 PC 클립보드로 전송 (${png.size / 1024}KB)")
+        } ?: setStatus("캡처하려면 접근성 권한이 필요합니다.")
+    }
+
+    private fun md5(bytes: ByteArray): String =
+        java.security.MessageDigest.getInstance("MD5").digest(bytes)
+            .joinToString("") { "%02x".format(it) }
 
     // ── plumbing ──────────────────────────────────────────────────────────────
     private fun setStatus(s: String) {

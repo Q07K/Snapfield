@@ -48,7 +48,13 @@ class PeerLink(
     private var recvKey: SecretKeySpec? = null
     private var sendCtr = 0L
     private var recvCtr = 0L
-    private val sendLock = Any()
+
+    // All sends run on one dedicated thread (like the desktop's writer thread):
+    // callers include the Android MAIN thread, which is forbidden from touching
+    // sockets — a main-thread send would throw NetworkOnMainThreadException.
+    private val sendExec = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+        Thread(r, "Snapfield.Send").apply { isDaemon = true }
+    }
 
     class AuthenticationFailure : Exception()
 
@@ -123,26 +129,29 @@ class PeerLink(
         val key = sendKey ?: return
         if (closed.get()) return
         try {
-            synchronized(sendLock) {
-                val plain = message.toJsonBytes()
-                val ctr = sendCtr++
-                val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-                cipher.init(Cipher.ENCRYPT_MODE, key, GCMParameterSpec(128, nonceFor(ctr)))
-                val out = cipher.doFinal(plain) // javax appends the tag: [ct][tag16]
-                val ct = out.copyOfRange(0, out.size - 16)
-                val tag = out.copyOfRange(out.size - 16, out.size)
+            sendExec.execute {
+                if (closed.get()) return@execute
+                try {
+                    val plain = message.toJsonBytes()
+                    val ctr = sendCtr++ // this thread owns the counter
+                    val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+                    cipher.init(Cipher.ENCRYPT_MODE, key, GCMParameterSpec(128, nonceFor(ctr)))
+                    val out = cipher.doFinal(plain) // javax appends the tag: [ct][tag16]
+                    val ct = out.copyOfRange(0, out.size - 16)
+                    val tag = out.copyOfRange(out.size - 16, out.size)
 
-                val frame = ByteBuffer.allocate(4 + 8 + 16 + ct.size).order(ByteOrder.LITTLE_ENDIAN)
-                frame.putInt(8 + 16 + ct.size)
-                frame.order(ByteOrder.BIG_ENDIAN).putLong(ctr)
-                frame.put(tag).put(ct)
-                val stream = socket?.getOutputStream() ?: return
-                stream.write(frame.array())
-                stream.flush()
+                    val frame = ByteBuffer.allocate(4 + 8 + 16 + ct.size).order(ByteOrder.LITTLE_ENDIAN)
+                    frame.putInt(8 + 16 + ct.size)
+                    frame.order(ByteOrder.BIG_ENDIAN).putLong(ctr)
+                    frame.put(tag).put(ct)
+                    val stream = socket?.getOutputStream() ?: return@execute
+                    stream.write(frame.array())
+                    stream.flush()
+                } catch (e: Exception) {
+                    fireDisconnected(e.message ?: "send failed")
+                }
             }
-        } catch (e: Exception) {
-            fireDisconnected(e.message ?: "send failed")
-        }
+        } catch (_: java.util.concurrent.RejectedExecutionException) { /* closing */ }
     }
 
     private fun readLoop(input: DataInputStream) {
@@ -234,6 +243,7 @@ class PeerLink(
 
     fun close() {
         closed.set(true)
+        sendExec.shutdown()
         try { socket?.close() } catch (_: Exception) {}
         try { server?.close() } catch (_: Exception) {}
     }

@@ -46,6 +46,13 @@ class SnapfieldImeService : InputMethodService() {
         instance = this
     }
 
+    override fun onStartInput(attribute: android.view.inputmethod.EditorInfo?, restarting: Boolean) {
+        super.onStartInput(attribute, restarting)
+        // As the selected IME we're allowed to read the clipboard — good moment
+        // to ship any copy that happened while reading was blocked.
+        com.snapfield.receiver.ReceiverService.instance?.trySyncClipboard()
+    }
+
     override fun onDestroy() {
         instance = null
         super.onDestroy()

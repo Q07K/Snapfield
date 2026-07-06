@@ -93,6 +93,12 @@ class MainActivity : Activity() {
         refresh(ReceiverService.statusText)
     }
 
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        // Focused = allowed to read the clipboard; sync anything copied earlier.
+        if (hasFocus) ReceiverService.instance?.trySyncClipboard()
+    }
+
     override fun onDestroy() {
         ReceiverService.listener = null
         super.onDestroy()

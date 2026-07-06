@@ -37,6 +37,7 @@ class ReceiverService : Service() {
         @Volatile var running = false
         @Volatile var statusText = "대기 전"
         @Volatile var listener: ((String) -> Unit)? = null
+        @Volatile var instance: ReceiverService? = null
 
         fun start(context: Context) {
             context.startForegroundService(Intent(context, ReceiverService::class.java))
@@ -56,16 +57,26 @@ class ReceiverService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        instance = this
         startForeground(1, buildNotification())
         running = true
         beacon = Beacon(deviceName(), PORT).also { it.start() }
         listen()
+        // Fires on every copy; the read itself only succeeds while we're allowed
+        // (foreground, or the Snapfield keyboard is the selected IME).
+        (getSystemService(CLIPBOARD_SERVICE) as ClipboardManager)
+            .addPrimaryClipChangedListener(clipChanged)
         setStatus("연결 대기 중 — 포트 $PORT")
     }
 
     override fun onDestroy() {
+        instance = null
         disposed = true
         running = false
+        try {
+            (getSystemService(CLIPBOARD_SERVICE) as ClipboardManager)
+                .removePrimaryClipChangedListener(clipChanged)
+        } catch (_: Exception) {}
         beacon?.stop()
         link?.close()
         SnapfieldAccessibilityService.instance?.hideCursor()
@@ -149,10 +160,35 @@ class ReceiverService : Service() {
         Settings.Global.getString(contentResolver, "device_name")?.takeIf { it.isNotBlank() }
             ?: Build.MODEL
 
-    // ── clipboard (PC → phone; the reverse is restricted on Android 10+) ─────
+    // ── clipboard, both directions ────────────────────────────────────────────
+    // PC → phone: write is allowed from the service. Phone → PC: Android 10+
+    // only lets the FOCUSED app or the DEFAULT IME read the clipboard — so the
+    // change listener fires always, but the read only succeeds while the
+    // Snapfield keyboard is selected or our activity is up. We also retry at
+    // those moments (IME session start / activity resume) to catch copies that
+    // happened while reading was blocked.
+    @Volatile private var lastApplied = "" // last text we wrote (came from the PC)
+    @Volatile private var lastSent = ""    // last text we shipped to the PC
+
+    private val clipChanged = ClipboardManager.OnPrimaryClipChangedListener { trySyncClipboard() }
+
+    /** Reads the clipboard if Android lets us right now, and ships new text to the PC. */
+    fun trySyncClipboard() = main.post {
+        try {
+            val cm = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+            val text = cm.primaryClip?.getItemAt(0)?.coerceToText(this)?.toString() ?: return@post
+            if (text.isEmpty() || text.length > 500_000) return@post
+            if (text == lastApplied || text == lastSent) return@post // echo guard, same as desktop
+            lastSent = text
+            link?.send(NetMessage(type = MsgType.Clipboard, text = text))
+            setStatus("클립보드 전송 (${text.length}자)")
+        } catch (_: Exception) { /* read blocked right now — the next window will catch it */ }
+    }
+
     private fun applyClipboard(text: String) = main.post {
         try {
             val cm = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+            lastApplied = text
             cm.setPrimaryClip(ClipData.newPlainText("Snapfield", text))
             setStatus("클립보드 수신 (${text.length}자)")
         } catch (_: Exception) { /* background clipboard write refused on some ROMs */ }

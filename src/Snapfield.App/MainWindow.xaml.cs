@@ -7,8 +7,9 @@ using Snapfield.App.ViewModels;
 namespace Snapfield.App;
 
 /// <summary>
-/// Single main window with three tabs. Only the calibration canvas needs
-/// code-behind (drag math + auto-save); the tabs and other content are pure MVVM.
+/// Single main window with three tabs. Code-behind covers the calibration canvas
+/// (drag math + auto-save) and the ←/→ shortcuts on the role-select split;
+/// the tabs and other content are pure MVVM.
 /// </summary>
 public partial class MainWindow : Window
 {
@@ -32,6 +33,16 @@ public partial class MainWindow : Window
             Hide();
             App.Current.NotifyHiddenToTray();
         };
+    }
+
+    /// <summary>←/→ pick a role on the full-bleed split (choose page only).</summary>
+    protected override void OnPreviewKeyDown(KeyEventArgs e)
+    {
+        base.OnPreviewKeyDown(e);
+        if (e.Handled || Keyboard.Modifiers != ModifierKeys.None) return;
+        if (DataContext is not MainViewModel vm || !vm.IsConnect || !vm.Network.IsChoosePage) return;
+        if (e.Key == Key.Left) { vm.Network.ChooseControllerCommand.Execute(null); e.Handled = true; }
+        else if (e.Key == Key.Right) { vm.Network.ChooseReceiverCommand.Execute(null); e.Handled = true; }
     }
 
     private void Surface_SizeChanged(object sender, SizeChangedEventArgs e) =>

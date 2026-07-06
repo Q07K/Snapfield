@@ -20,7 +20,8 @@ public enum NetMode { Choose, Receiver, Controller }
 
 /// <summary>
 /// Drives the network window across three pages:
-///   • Choose  — a toggle between 조작 기기 (controller) and 수신 기기 (receiver)
+///   • Choose  — full-bleed split: one click picks 조작 기기 (controller) or 수신 기기
+///               (receiver); picking receiver starts listening immediately
 ///   • Controller — a list of recent machines + a form to add a new one
 ///   • Receiver   — this PC's IP + pairing code, with a live "waiting / controlled" state
 /// </summary>
@@ -31,9 +32,12 @@ public sealed class NetworkViewModel : ObservableObject
 
     public NetworkViewModel()
     {
-        SelectControllerCommand = new RelayCommand(() => IsControllerSelected = true);
-        SelectReceiverCommand = new RelayCommand(() => IsControllerSelected = false);
-        ProceedCommand = new RelayCommand(() => Mode = IsControllerSelected ? NetMode.Controller : NetMode.Receiver);
+        ChooseControllerCommand = new RelayCommand(() => Mode = NetMode.Controller);
+        ChooseReceiverCommand = new RelayCommand(() =>
+        {
+            Mode = NetMode.Receiver;
+            if (!IsActive) Listen(); // one step: picking the role starts waiting immediately
+        });
         BackCommand = new RelayCommand(() => { Stop(); ShowNewForm = false; Mode = NetMode.Choose; });
         ListenCommand = new RelayCommand(Listen, () => !IsActive);
         // These may run while already connected — the controller is a hub and can
@@ -60,9 +64,8 @@ public sealed class NetworkViewModel : ObservableObject
         foreach (var r in s.Recent) RecentConnections.Add(r);
     }
 
-    public ICommand SelectControllerCommand { get; }
-    public ICommand SelectReceiverCommand { get; }
-    public ICommand ProceedCommand { get; }
+    public ICommand ChooseControllerCommand { get; }
+    public ICommand ChooseReceiverCommand { get; }
     public ICommand BackCommand { get; }
     public ICommand ListenCommand { get; }
     public ICommand ConnectCommand { get; }
@@ -99,18 +102,6 @@ public sealed class NetworkViewModel : ObservableObject
     /// <summary>Receivers currently connected (controller hub can hold several).</summary>
     public ObservableCollection<string> ConnectedPeers { get; } = new();
     public bool HasPeers => ConnectedPeers.Count > 0;
-
-    // ── Choose page (B3 toggle) ───────────────────────────────────────────────
-    private bool _isControllerSelected = true;
-    public bool IsControllerSelected
-    {
-        get => _isControllerSelected;
-        set { if (SetField(ref _isControllerSelected, value)) { OnPropertyChanged(nameof(IsReceiverSelected)); OnPropertyChanged(nameof(RoleDesc)); } }
-    }
-    public bool IsReceiverSelected => !_isControllerSelected;
-    public string RoleDesc => IsControllerSelected
-        ? "이 PC의 마우스·키보드로 다른 PC를 조작합니다."
-        : "다른 PC의 마우스·키보드를 이 PC로 받습니다.";
 
     // ── Page routing ──────────────────────────────────────────────────────────
     private NetMode _mode = NetMode.Choose;

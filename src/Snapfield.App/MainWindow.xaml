@@ -48,19 +48,44 @@
                 <Setter Property="Background" Value="{StaticResource Accent}"/><Setter Property="Foreground" Value="White"/></DataTrigger></Style.Triggers>
         </Style>
 
-        <!-- role toggle (inside Connect tab) -->
-        <Style x:Key="SegLeft" TargetType="Button" BasedOn="{StaticResource SegmentButton}">
-            <Setter Property="Tag"><Setter.Value><CornerRadius>8,0,0,8</CornerRadius></Setter.Value></Setter>
-            <Setter Property="Padding" Value="20,9"/>
-            <Style.Triggers><DataTrigger Binding="{Binding IsControllerSelected}" Value="True">
-                <Setter Property="Background" Value="{StaticResource Accent}"/><Setter Property="Foreground" Value="White"/></DataTrigger></Style.Triggers>
+        <!-- role select: full-bleed halves (Connect tab, choose page). The whole
+             half is the button; hover brightens its gradient toward the role color. -->
+        <LinearGradientBrush x:Key="halfLeftIdle" StartPoint="0,0" EndPoint="0.7,1">
+            <GradientStop Color="#101527" Offset="0"/><GradientStop Color="#0A0A11" Offset="0.75"/>
+        </LinearGradientBrush>
+        <LinearGradientBrush x:Key="halfLeftHover" StartPoint="0,0" EndPoint="0.7,1">
+            <GradientStop Color="#16204A" Offset="0"/><GradientStop Color="#0C0E18" Offset="0.75"/>
+        </LinearGradientBrush>
+        <LinearGradientBrush x:Key="halfRightIdle" StartPoint="1,0" EndPoint="0.3,1">
+            <GradientStop Color="#1D1610" Offset="0"/><GradientStop Color="#0A0A11" Offset="0.75"/>
+        </LinearGradientBrush>
+        <LinearGradientBrush x:Key="halfRightHover" StartPoint="1,0" EndPoint="0.3,1">
+            <GradientStop Color="#2C2013" Offset="0"/><GradientStop Color="#0E0C0A" Offset="0.75"/>
+        </LinearGradientBrush>
+        <Style x:Key="HalfButton" TargetType="Button">
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="bg" Background="{TemplateBinding Background}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bg" Property="Background" Value="{Binding Tag, RelativeSource={RelativeSource TemplatedParent}}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
-        <Style x:Key="SegRight" TargetType="Button" BasedOn="{StaticResource SegmentButton}">
-            <Setter Property="Tag"><Setter.Value><CornerRadius>0,8,8,0</CornerRadius></Setter.Value></Setter>
-            <Setter Property="BorderThickness" Value="0"/>
-            <Setter Property="Padding" Value="20,9"/>
-            <Style.Triggers><DataTrigger Binding="{Binding IsReceiverSelected}" Value="True">
-                <Setter Property="Background" Value="{StaticResource Accent}"/><Setter Property="Foreground" Value="White"/></DataTrigger></Style.Triggers>
+        <Style x:Key="KeyCap" TargetType="Border">
+            <Setter Property="Background" Value="#1E2030"/>
+            <Setter Property="BorderBrush" Value="#333650"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="4"/>
+            <Setter Property="Padding" Value="6,1"/>
         </Style>
 
         <Style x:Key="RecentRow" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
@@ -97,25 +122,80 @@
             <!-- ═══════════ TAB · 연결 (network) ═══════════ -->
             <Grid DataContext="{Binding Network}"
                   Visibility="{Binding DataContext.IsConnect, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource B2V}}">
-                <Grid Margin="18">
-                    <!-- role select -->
-                    <StackPanel Visibility="{Binding IsChoosePage, Converter={StaticResource B2V}}" VerticalAlignment="Center">
-                        <TextBlock Foreground="#EAECF6" FontSize="15" HorizontalAlignment="Center">
-                            <Run Text="이 PC ("/><Run Text="{Binding MachineName, Mode=OneWay}" FontWeight="Bold"/><Run Text=")의 역할"/>
-                        </TextBlock>
-                        <Border HorizontalAlignment="Center" Margin="0,18,0,16" Background="#1B1C26"
-                                BorderBrush="{StaticResource Hairline}" BorderThickness="1" CornerRadius="9">
-                            <StackPanel Orientation="Horizontal">
-                                <Button Content="조작 기기" Command="{Binding SelectControllerCommand}" Style="{StaticResource SegLeft}"/>
-                                <Button Content="수신 기기" Command="{Binding SelectReceiverCommand}" Style="{StaticResource SegRight}"/>
-                            </StackPanel>
-                        </Border>
-                        <TextBlock Text="{Binding RoleDesc}" Foreground="#9A9EAD" TextAlignment="Center"
-                                   TextWrapping="Wrap" MaxWidth="320" FontSize="13" Margin="0,0,0,22"/>
-                        <Button Content="다음" Command="{Binding ProceedCommand}" Style="{StaticResource PrimaryButton}"
-                                Width="150" HorizontalAlignment="Center"/>
-                    </StackPanel>
 
+                <!-- role select: full-bleed left/right split — one click picks the role;
+                     receiver starts waiting immediately (no 다음 / 대기 시작 steps) -->
+                <Grid Visibility="{Binding IsChoosePage, Converter={StaticResource B2V}}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/><ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+
+                    <Button Grid.Column="0" Style="{StaticResource HalfButton}" Command="{Binding ChooseControllerCommand}"
+                            Background="{StaticResource halfLeftIdle}" Tag="{StaticResource halfLeftHover}">
+                        <StackPanel MaxWidth="230">
+                            <Grid HorizontalAlignment="Center">
+                                <StackPanel>
+                                    <Border Width="64" Height="42" CornerRadius="6" BorderThickness="2" BorderBrush="#5B87EE">
+                                        <Border.Background><LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                            <GradientStop Color="#171E33" Offset="0"/><GradientStop Color="#0D1120" Offset="1"/>
+                                        </LinearGradientBrush></Border.Background>
+                                        <Border.Effect><DropShadowEffect Color="#5B87EE" BlurRadius="18" ShadowDepth="0" Opacity="0.5"/></Border.Effect>
+                                    </Border>
+                                    <Rectangle Width="9" Height="7" Fill="#2A2F40"/>
+                                    <Rectangle Width="26" Height="4" RadiusX="2" RadiusY="2" Fill="#2A2F40"/>
+                                </StackPanel>
+                                <TextBlock Text="🖱️" FontSize="15" Margin="46,14,0,0"/>
+                            </Grid>
+                            <TextBlock Text="조작 기기" Foreground="{StaticResource cream}" FontSize="17" FontWeight="Bold"
+                                       HorizontalAlignment="Center" Margin="0,16,0,5"/>
+                            <TextBlock Text="이 PC의 마우스·키보드로 다른 PC들을 조작" Foreground="#9A9EAD" FontSize="12"
+                                       TextWrapping="Wrap" TextAlignment="Center" MaxWidth="200"/>
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,16,0,0">
+                                <Border Style="{StaticResource KeyCap}">
+                                    <TextBlock Text="←" FontFamily="Consolas" FontSize="11" Foreground="#9A9EAD"/>
+                                </Border>
+                                <TextBlock Text="또는 클릭" FontSize="11" Foreground="#5B6070" VerticalAlignment="Center" Margin="6,0,0,0"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </Button>
+
+                    <Button Grid.Column="1" Style="{StaticResource HalfButton}" Command="{Binding ChooseReceiverCommand}"
+                            Background="{StaticResource halfRightIdle}" Tag="{StaticResource halfRightHover}">
+                        <StackPanel MaxWidth="230">
+                            <StackPanel HorizontalAlignment="Center">
+                                <Border Width="64" Height="42" CornerRadius="6" BorderThickness="2" BorderBrush="#EBA956">
+                                    <Border.Background><LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                        <GradientStop Color="#2A2114" Offset="0"/><GradientStop Color="#171008" Offset="1"/>
+                                    </LinearGradientBrush></Border.Background>
+                                    <Border.Effect><DropShadowEffect Color="#EBA956" BlurRadius="18" ShadowDepth="0" Opacity="0.5"/></Border.Effect>
+                                </Border>
+                                <Rectangle Width="9" Height="7" Fill="#2A2F40"/>
+                                <Rectangle Width="26" Height="4" RadiusX="2" RadiusY="2" Fill="#2A2F40"/>
+                            </StackPanel>
+                            <TextBlock Text="수신 기기" Foreground="{StaticResource cream}" FontSize="17" FontWeight="Bold"
+                                       HorizontalAlignment="Center" Margin="0,16,0,5"/>
+                            <TextBlock Text="다른 PC의 조작을 받기 — 선택 즉시 대기 시작" Foreground="#9A9EAD" FontSize="12"
+                                       TextWrapping="Wrap" TextAlignment="Center" MaxWidth="200"/>
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,16,0,0">
+                                <Border Style="{StaticResource KeyCap}">
+                                    <TextBlock Text="→" FontFamily="Consolas" FontSize="11" Foreground="#9A9EAD"/>
+                                </Border>
+                                <TextBlock Text="또는 클릭" FontSize="11" Foreground="#5B6070" VerticalAlignment="Center" Margin="6,0,0,0"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </Button>
+
+                    <!-- center divider with 또는 pill (decoration only) -->
+                    <Grid Grid.ColumnSpan="2" IsHitTestVisible="False">
+                        <Rectangle Width="1" Fill="{StaticResource Hairline}" HorizontalAlignment="Center"/>
+                        <Border HorizontalAlignment="Center" VerticalAlignment="Center" Background="#0A0A11"
+                                BorderBrush="{StaticResource Hairline}" BorderThickness="1" CornerRadius="13" Padding="11,3">
+                            <TextBlock Text="또는" FontSize="11" Foreground="#5B6070"/>
+                        </Border>
+                    </Grid>
+                </Grid>
+
+                <Grid Margin="18">
                     <!-- controller -->
                     <StackPanel Visibility="{Binding IsControllerPage, Converter={StaticResource B2V}}">
                         <StackPanel Orientation="Horizontal">

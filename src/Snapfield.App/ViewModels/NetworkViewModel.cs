@@ -404,6 +404,17 @@ public sealed class NetworkViewModel : ObservableObject
     private void StartDiscovery()
     {
         if (_discovery is not null) return;
+
+        // Discovery RECEIVES UDP beacons, so the controller needs the inbound
+        // firewall rule just as much as the receiver does — and the rule must
+        // point at the current exe (it goes stale on every update).
+        new Thread(() =>
+        {
+            var msg = FirewallHelper.EnsureRule();
+            if (msg.Contains("확인됨")) return; // quiet when nothing had to change
+            Application.Current?.Dispatcher.BeginInvoke(() => { if (Mode == NetMode.Controller) Status = msg; });
+        }) { IsBackground = true, Name = "Snapfield.Firewall" }.Start();
+
         _discovery = new DiscoveryListener();
         _discovery.Found += OnPeerFound;
         _discovery.Start();

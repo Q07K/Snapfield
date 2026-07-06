@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Text;
 
@@ -36,17 +37,56 @@ public sealed class Beacon : IDisposable
     private void Run(string name, int tcpPort)
     {
         var payload = Encoding.UTF8.GetBytes($"{Magic}\t{name}\t{tcpPort}");
-        var target = new IPEndPoint(IPAddress.Broadcast, Discovery.Port);
         try
         {
             using var udp = new UdpClient { EnableBroadcast = true };
+            var targets = BroadcastTargets();
+            var iteration = 0;
             while (!_stop)
             {
-                try { udp.Send(payload, payload.Length, target); } catch { }
+                // Interfaces come and go (Wi-Fi switch, VPN) — refresh every ~30s.
+                if (iteration++ % 15 == 0) targets = BroadcastTargets();
+                foreach (var t in targets)
+                {
+                    try { udp.Send(payload, payload.Length, t); } catch { }
+                }
                 for (var i = 0; i < 20 && !_stop; i++) Thread.Sleep(100); // ~2s, responsive stop
             }
         }
         catch { /* broadcast unavailable — discovery just won't show us */ }
+    }
+
+    /// <summary>
+    /// 255.255.255.255 only leaves on the default interface, so a machine with a
+    /// VPN or virtual adapter can beacon into the wrong network. Also send the
+    /// subnet-directed broadcast (e.g. 192.168.0.255) of every up IPv4 interface.
+    /// </summary>
+    private static List<IPEndPoint> BroadcastTargets()
+    {
+        var targets = new List<IPEndPoint> { new(IPAddress.Broadcast, Discovery.Port) };
+        try
+        {
+            foreach (var ni in NetworkInterface.GetAllNetworkInterfaces())
+            {
+                if (ni.OperationalStatus != OperationalStatus.Up ||
+                    ni.NetworkInterfaceType == NetworkInterfaceType.Loopback) continue;
+                foreach (var ua in ni.GetIPProperties().UnicastAddresses)
+                {
+                    if (ua.Address.AddressFamily != AddressFamily.InterNetwork) continue;
+                    var mask = ua.IPv4Mask;
+                    if (mask is null || mask.Equals(IPAddress.Any)) continue;
+                    var a = ua.Address.GetAddressBytes();
+                    var m = mask.GetAddressBytes();
+                    var b = new byte[4];
+                    for (var i = 0; i < 4; i++) b[i] = (byte)(a[i] | ~m[i]);
+                    var bcast = new IPAddress(b);
+                    if (!targets.Any(t => t.Address.Equals(bcast)))
+                        targets.Add(new IPEndPoint(bcast, Discovery.Port));
+                }
+            }
+        }
+        catch { /* interface enumeration failed — the global broadcast still goes out */ }
+        return targets;
     }
 
     public void Dispose() { _stop = true; _thread = null; }

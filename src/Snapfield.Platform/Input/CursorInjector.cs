@@ -9,6 +9,22 @@ namespace Snapfield.Platform.Input;
 /// </summary>
 public static class CursorInjector
 {
+    private static readonly int InputSize = System.Runtime.InteropServices.Marshal.SizeOf<INPUT>();
+
+    // SendInput wants an array; injection runs per mouse move on the hook and
+    // network-reader threads, so reuse a one-element buffer per thread.
+    [ThreadStatic] private static INPUT[]? _inputBuf;
+
+    /// <summary>Virtual-screen bounds, cached — queried per move otherwise.</summary>
+    private sealed record VirtualScreen(int Left, int Top, int Width, int Height);
+    private static volatile VirtualScreen? _vScreen;
+
+    static CursorInjector()
+    {
+        // Resolution / monitor topology changes invalidate the cached bounds.
+        Microsoft.Win32.SystemEvents.DisplaySettingsChanged += (_, _) => _vScreen = null;
+    }
+
     public static (int X, int Y) GetPosition()
     {
         GetCursorPos(out var p);
@@ -18,16 +34,17 @@ public static class CursorInjector
     /// <summary>Warps the cursor to a point in virtual-desktop pixels.</summary>
     public static void WarpTo(int x, int y)
     {
-        int vsLeft = GetSystemMetrics(SM_XVIRTUALSCREEN);
-        int vsTop = GetSystemMetrics(SM_YVIRTUALSCREEN);
-        int vsWidth = Math.Max(GetSystemMetrics(SM_CXVIRTUALSCREEN), 1);
-        int vsHeight = Math.Max(GetSystemMetrics(SM_CYVIRTUALSCREEN), 1);
+        var vs = _vScreen ??= new VirtualScreen(
+            GetSystemMetrics(SM_XVIRTUALSCREEN),
+            GetSystemMetrics(SM_YVIRTUALSCREEN),
+            Math.Max(GetSystemMetrics(SM_CXVIRTUALSCREEN), 1),
+            Math.Max(GetSystemMetrics(SM_CYVIRTUALSCREEN), 1));
 
         // Normalise to the 0..65535 absolute range SendInput expects.
-        int nx = (int)Math.Round((x - vsLeft) * 65535.0 / Math.Max(vsWidth - 1, 1));
-        int ny = (int)Math.Round((y - vsTop) * 65535.0 / Math.Max(vsHeight - 1, 1));
+        int nx = (int)Math.Round((x - vs.Left) * 65535.0 / Math.Max(vs.Width - 1, 1));
+        int ny = (int)Math.Round((y - vs.Top) * 65535.0 / Math.Max(vs.Height - 1, 1));
 
-        var input = new INPUT
+        Dispatch(new INPUT
         {
             type = INPUT_MOUSE,
             U = new InputUnion
@@ -40,8 +57,7 @@ public static class CursorInjector
                     dwExtraInfo = SnapfieldSignature,
                 },
             },
-        };
-        SendInput(1, new[] { input }, System.Runtime.InteropServices.Marshal.SizeOf<INPUT>());
+        });
     }
 
     /// <summary>Injects a mouse button transition at the current cursor position.</summary>
@@ -68,7 +84,7 @@ public static class CursorInjector
         uint flags = 0;
         if (!down) flags |= KEYEVENTF_KEYUP;
         if (extended) flags |= KEYEVENTF_EXTENDEDKEY;
-        var input = new INPUT
+        Dispatch(new INPUT
         {
             type = INPUT_KEYBOARD,
             U = new InputUnion
@@ -81,20 +97,25 @@ public static class CursorInjector
                     dwExtraInfo = SnapfieldSignature,
                 },
             },
-        };
-        SendInput(1, new[] { input }, System.Runtime.InteropServices.Marshal.SizeOf<INPUT>());
+        });
     }
 
     private static void Send(uint flags, uint mouseData)
     {
-        var input = new INPUT
+        Dispatch(new INPUT
         {
             type = INPUT_MOUSE,
             U = new InputUnion
             {
                 mi = new MOUSEINPUT { dwFlags = flags, mouseData = mouseData, dwExtraInfo = SnapfieldSignature },
             },
-        };
-        SendInput(1, new[] { input }, System.Runtime.InteropServices.Marshal.SizeOf<INPUT>());
+        });
+    }
+
+    private static void Dispatch(in INPUT input)
+    {
+        var buf = _inputBuf ??= new INPUT[1];
+        buf[0] = input;
+        SendInput(1, buf, InputSize);
     }
 }

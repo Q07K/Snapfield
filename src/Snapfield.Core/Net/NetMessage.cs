@@ -49,7 +49,13 @@ public sealed record NetMessage
     public string? Pin { get; init; }
     public SharedFile[]? Files { get; init; }
 
-    private static readonly JsonSerializerOptions Json = new();
+    // Omit default-valued fields: a CursorMove then carries only {X, Y} instead
+    // of all 15 fields (~5× smaller frames at mouse-polling rate). Deserialising
+    // fills missing fields with the same defaults, so the round-trip is lossless.
+    private static readonly JsonSerializerOptions Json = new()
+    {
+        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault,
+    };
 
     public static NetMessage Hello(string machineId, MonitorState[] monitors, string? pin = null) =>
         new() { Type = MsgType.Hello, MachineId = machineId, Monitors = monitors, Pin = pin };
@@ -70,6 +76,10 @@ public sealed record NetMessage
 
     /// <summary>Serialise the message body to UTF-8 JSON (no length prefix).</summary>
     public byte[] ToJson() => JsonSerializer.SerializeToUtf8Bytes(this, Json);
+
+    /// <summary>Serialise into a caller-owned writer — lets the send loop reuse
+    /// its buffers instead of allocating per message.</summary>
+    public void WriteTo(Utf8JsonWriter writer) => JsonSerializer.Serialize(writer, this, Json);
 
     public static NetMessage? FromBody(ReadOnlySpan<byte> body) =>
         JsonSerializer.Deserialize<NetMessage>(body, Json);

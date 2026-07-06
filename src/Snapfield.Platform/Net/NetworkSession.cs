@@ -39,6 +39,7 @@ public sealed class NetworkSession : IDisposable
     private string _lastAppliedClipboard = "";
     private Beacon? _beacon;               // receiver only
     private long _rxCount;
+    private int _lastRxTick;               // throttles ReceiverActivity UI updates
     private double _sensitivity = 1.0;
 
     public PeerRole Role { get; private set; } = PeerRole.None;
@@ -127,7 +128,15 @@ public sealed class NetworkSession : IDisposable
             case MsgType.CursorMove:
                 if (Role != PeerRole.Receiver) break;
                 CursorInjector.WarpTo(msg.X, msg.Y);
-                ReceiverActivity?.Invoke(++_rxCount, msg.X, msg.Y);
+                _rxCount++;
+                // Throttle to ~33 Hz: moves arrive at mouse polling rate, and
+                // dispatching every one to the UI thread starves rendering.
+                var tick = Environment.TickCount;
+                if (_rxCount == 1 || tick - _lastRxTick >= 30)
+                {
+                    _lastRxTick = tick;
+                    ReceiverActivity?.Invoke(_rxCount, msg.X, msg.Y);
+                }
                 break;
             case MsgType.MouseButton:
                 if (Role == PeerRole.Receiver) CursorInjector.MouseButton(msg.Button, msg.Down);
@@ -229,10 +238,16 @@ public sealed class NetworkSession : IDisposable
         Broadcast(NetMessage.LayoutSync(combined.Monitors.Select(MonitorState.From).ToArray()));
     }
 
+    // Called per mouse move while captured — plain loop, no closure allocation.
     private PeerLink? LinkFor(string? machineId)
     {
         if (machineId is null) return null;
-        lock (_lock) return _conns.FirstOrDefault(c => c.MachineId == machineId)?.Link;
+        lock (_lock)
+        {
+            foreach (var c in _conns)
+                if (c.MachineId == machineId) return c.Link;
+        }
+        return null;
     }
 
     private void Broadcast(NetMessage m)

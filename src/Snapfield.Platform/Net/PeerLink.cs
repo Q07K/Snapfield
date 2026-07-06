@@ -1,9 +1,11 @@
+using System.Buffers;
 using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using Snapfield.Core.Net;
 
 namespace Snapfield.Platform.Net;
@@ -24,9 +26,18 @@ namespace Snapfield.Platform.Net;
 /// </summary>
 public sealed class PeerLink : IDisposable
 {
-    // ~8s of cursor moves at 125 Hz. A full queue means the peer stopped
-    // draining (hung app / dead network) — drop the link rather than block.
+    // Cursor moves coalesce into a single slot (see Send), so the queue only
+    // holds discrete events (buttons, keys, clipboard …). A full queue means the
+    // peer stopped draining (hung app / dead network) — drop the link rather
+    // than block.
     private const int SendQueueCapacity = 1024;
+
+    // Latest-wins slot for cursor moves: only the newest position matters, so a
+    // slow peer replays one fresh position instead of every stale intermediate.
+    // The queue carries this marker (by reference) to keep ordering with respect
+    // to other messages; the actual position lives in _pendingCursor.
+    private static readonly NetMessage CursorMarker = new() { Type = MsgType.CursorMove };
+    private NetMessage? _pendingCursor;
 
     private TcpListener? _listener;
     private TcpClient? _client;
@@ -162,6 +173,12 @@ public sealed class PeerLink : IDisposable
         if (queue is null || _closed) return;
         try
         {
+            if (message.Type == MsgType.CursorMove)
+            {
+                var prev = Interlocked.Exchange(ref _pendingCursor, message);
+                if (prev is not null) return; // a marker is already queued; position updated in place
+                message = CursorMarker;
+            }
             if (!queue.TryAdd(message))
                 FireDisconnected("송신 적체 — 상대 기기가 응답하지 않습니다.");
         }
@@ -172,21 +189,37 @@ public sealed class PeerLink : IDisposable
     {
         var stream = _stream!;
         var gcm = _send!;
+        // This thread owns these exclusively; reusing them makes the
+        // steady-state send path (a cursor move) allocation-free.
+        var nonce = new byte[12];
+        var body = new ArrayBufferWriter<byte>(256);
+        using var json = new Utf8JsonWriter(body);
+        var frame = new byte[1024]; // grows to the largest message seen
         try
         {
-            foreach (var message in queue.GetConsumingEnumerable())
+            foreach (var queued in queue.GetConsumingEnumerable())
             {
-                var plain = message.ToJson();
-                var ct = new byte[plain.Length];
-                var tag = new byte[16];
+                var message = queued;
+                if (ReferenceEquals(message, CursorMarker))
+                {
+                    message = Interlocked.Exchange(ref _pendingCursor, null);
+                    if (message is null) continue;
+                }
+                body.ResetWrittenCount();
+                json.Reset(body);
+                message.WriteTo(json);
+                json.Flush();
+                var plain = body.WrittenSpan;
+
+                // Frame: [len:4][ctr:8][tag:16][ciphertext] — encrypt in place.
+                var total = 4 + 8 + 16 + plain.Length;
+                if (frame.Length < total) frame = new byte[Math.Max(total, frame.Length * 2)];
                 var ctr = _sendCtr++;
-                gcm.Encrypt(NonceFor(ctr), plain, ct, tag);
-                var frame = new byte[4 + 8 + 16 + ct.Length];
-                BinaryPrimitives.WriteInt32LittleEndian(frame, 8 + 16 + ct.Length);
+                BinaryPrimitives.WriteInt32LittleEndian(frame, 8 + 16 + plain.Length);
                 BinaryPrimitives.WriteUInt64BigEndian(frame.AsSpan(4), ctr);
-                tag.CopyTo(frame, 12);
-                ct.CopyTo(frame, 28);
-                stream.Write(frame, 0, frame.Length);
+                BinaryPrimitives.WriteUInt64BigEndian(nonce.AsSpan(4), ctr);
+                gcm.Encrypt(nonce, plain, frame.AsSpan(28, plain.Length), frame.AsSpan(12, 16));
+                stream.Write(frame, 0, total);
             }
         }
         catch (Exception ex) { FireDisconnected(ex.Message); }
@@ -196,6 +229,9 @@ public sealed class PeerLink : IDisposable
     {
         var stream = _stream!;
         var lenBuf = new byte[4];
+        var nonce = new byte[12];
+        var buf = new byte[1024];   // both grow to the largest frame seen
+        var plain = new byte[1024];
         try
         {
             while (!_closed)
@@ -203,18 +239,19 @@ public sealed class PeerLink : IDisposable
                 if (!ReadExact(stream, lenBuf, 4)) break;
                 var len = BinaryPrimitives.ReadInt32LittleEndian(lenBuf);
                 if (len < 24 || len > 96 * 1024 * 1024) break;
-                var buf = new byte[len];
+                if (buf.Length < len) buf = new byte[len];
                 if (!ReadExact(stream, buf, len)) break;
 
                 var ctr = BinaryPrimitives.ReadUInt64BigEndian(buf);
                 if (ctr < _recvCtr) break;           // replay / reorder — drop the link
                 _recvCtr = ctr + 1;
                 var tag = buf.AsSpan(8, 16);
-                var ct = buf.AsSpan(24);
-                var plain = new byte[ct.Length];
-                _recv!.Decrypt(NonceFor(ctr), ct, tag, plain);
+                var ct = buf.AsSpan(24, len - 24);   // buf may be larger than the frame
+                if (plain.Length < ct.Length) plain = new byte[ct.Length];
+                BinaryPrimitives.WriteUInt64BigEndian(nonce.AsSpan(4), ctr);
+                _recv!.Decrypt(nonce, ct, tag, plain.AsSpan(0, ct.Length));
 
-                var msg = NetMessage.FromBody(plain);
+                var msg = NetMessage.FromBody(plain.AsSpan(0, ct.Length));
                 if (msg is not null) MessageReceived?.Invoke(msg);
             }
         }
@@ -226,13 +263,6 @@ public sealed class PeerLink : IDisposable
     {
         if (_closed) return;
         if (Interlocked.Exchange(ref _downFired, 1) == 0) Disconnected?.Invoke(reason);
-    }
-
-    private static byte[] NonceFor(ulong counter)
-    {
-        var n = new byte[12];
-        BinaryPrimitives.WriteUInt64BigEndian(n.AsSpan(4), counter);
-        return n;
     }
 
     // ── raw framed I/O for the plaintext handshake (single-threaded) ─────────

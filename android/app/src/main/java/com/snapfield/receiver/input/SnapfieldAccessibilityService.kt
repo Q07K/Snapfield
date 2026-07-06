@@ -147,4 +147,16 @@ class SnapfieldAccessibilityService : AccessibilityService() {
             dispatchGesture(GestureDescription.Builder().addStroke(stroke).build(), null, null)
         } catch (_: Exception) { /* gesture refused (screen off / secure surface) */ }
     }
+
+    // ── global actions (mapped from PC keys) ──────────────────────────────────
+    /** PrtScn on the PC → a real screenshot on the phone (Android 9+). */
+    fun takeScreenshot() = main.post {
+        if (android.os.Build.VERSION.SDK_INT >= 28)
+            try { performGlobalAction(GLOBAL_ACTION_TAKE_SCREENSHOT) } catch (_: Exception) {}
+    }
+
+    /** Win key on the PC → the phone's home. */
+    fun goHome() = main.post {
+        try { performGlobalAction(GLOBAL_ACTION_HOME) } catch (_: Exception) {}
+    }
 }

@@ -123,7 +123,14 @@ class ReceiverService : Service() {
                 setStatus("조작 기기가 이 화면을 떠났습니다.")
             }
             MsgType.Clipboard -> msg.text?.let { applyClipboard(it) }
-            MsgType.Key -> com.snapfield.receiver.input.SnapfieldImeService.instance?.onKey(msg.vk, msg.down)
+            MsgType.Key -> when {
+                // Keys that mean something device-wide, not per-field:
+                msg.vk == 0x2C && msg.down -> // PrtScn → phone screenshot
+                    SnapfieldAccessibilityService.instance?.takeScreenshot()
+                (msg.vk == 0x5B || msg.vk == 0x5C) && msg.down -> // Win → home
+                    SnapfieldAccessibilityService.instance?.goHome()
+                else -> com.snapfield.receiver.input.SnapfieldImeService.instance?.onKey(msg.vk, msg.down)
+            }
             else -> { /* Layout / images / files: not consumed on Android yet */ }
         }
     }

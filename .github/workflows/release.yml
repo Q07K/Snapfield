@@ -101,7 +101,8 @@ jobs:
           KS_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
         run: |
           if [ -n "$KS_B64" ]; then
-            echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/snapfield.keystore"
+            # The pasted secret may carry CR/LF/spaces — strip before decoding.
+            printf '%s' "$KS_B64" | tr -d '[:space:]' | base64 -d > "$RUNNER_TEMP/snapfield.keystore"
             echo "ANDROID_KEYSTORE_FILE=$RUNNER_TEMP/snapfield.keystore" >> "$GITHUB_ENV"
           fi
 

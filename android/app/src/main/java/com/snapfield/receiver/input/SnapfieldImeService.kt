@@ -36,6 +36,11 @@ class SnapfieldImeService : InputMethodService() {
     @Volatile private var ctrl = false
     @Volatile private var alt = false
 
+    // 한/영: the PC forwards VK_HANGUL (0x15) from the 한/영 key; we compose
+    // dubeolsik Hangul locally since the PC's IME state never leaves the PC.
+    private val hangul = HangulComposer()
+    @Volatile private var hangulMode = false
+
     // A screenless IME: nothing to show, all input arrives over the network.
     override fun onCreateInputView(): View? = null
     override fun onEvaluateInputViewShown(): Boolean = false
@@ -48,6 +53,7 @@ class SnapfieldImeService : InputMethodService() {
 
     override fun onStartInput(attribute: android.view.inputmethod.EditorInfo?, restarting: Boolean) {
         super.onStartInput(attribute, restarting)
+        hangul.flush() // a new field starts clean — drop any half-composed syllable
         // As the selected IME we're allowed to read the clipboard — good moment
         // to ship any copy that happened while reading was blocked.
         com.snapfield.receiver.ReceiverService.instance?.trySyncClipboard()
@@ -72,9 +78,25 @@ class SnapfieldImeService : InputMethodService() {
     private fun handle(vk: Int, down: Boolean) {
         val ic = currentInputConnection ?: return
 
+        // 한/영 toggle (the PC's own IME state stays on the PC — we track ours).
+        if (vk == 0x15) {
+            if (down) { flushComposition(ic); hangulMode = !hangulMode }
+            return
+        }
+
+        // Jamo-level backspace while a syllable is composing.
+        if (vk == VK_BACK && hangulMode && hangul.isComposing) {
+            if (!down) return
+            hangul.backspace()
+            if (hangul.isComposing) ic.setComposingText(hangul.composing, 1)
+            else ic.commitText("", 1) // clears the (now empty) composing region
+            return
+        }
+
         val keyCode = specialKeyCode(vk)
         if (keyCode != 0) {
-            // Navigation / editing keys: real key events (down and up as they arrive).
+            // Navigation / editing keys end the composition, then act.
+            if (down) flushComposition(ic)
             ic.sendKeyEvent(KeyEvent(if (down) KeyEvent.ACTION_DOWN else KeyEvent.ACTION_UP, keyCode))
             return
         }
@@ -84,6 +106,7 @@ class SnapfieldImeService : InputMethodService() {
         // Ctrl/Alt shortcuts (Ctrl+A, Ctrl+C …): send as a key event with meta so
         // the app's own handling fires, instead of typing a stray letter.
         if ((ctrl || alt) && vk in 0x41..0x5A) {
+            flushComposition(ic)
             val code = KeyEvent.KEYCODE_A + (vk - 0x41)
             var meta = 0
             if (ctrl) meta = meta or KeyEvent.META_CTRL_ON or KeyEvent.META_CTRL_LEFT_ON
@@ -95,8 +118,28 @@ class SnapfieldImeService : InputMethodService() {
             return
         }
 
+        // Hangul mode: letters compose; everything else flushes then types.
+        if (hangulMode && vk in 0x41..0x5A) {
+            val jamo = hangul.jamoFor('a' + (vk - 0x41), shift)
+            if (jamo != null) {
+                val done = hangul.feed(jamo)
+                if (done.isNotEmpty()) ic.commitText(done, 1) // replaces the composing region
+                if (hangul.isComposing) ic.setComposingText(hangul.composing, 1)
+                return
+            }
+        }
+
         val ch = vkToChar(vk, shift) ?: return
+        flushComposition(ic)
         ic.commitText(ch.toString(), 1)
+    }
+
+    /** Commits whatever syllable is mid-composition (no-op when idle). */
+    private fun flushComposition(ic: android.view.inputmethod.InputConnection) {
+        if (!hangul.isComposing) return
+        val done = hangul.flush()
+        if (done.isNotEmpty()) ic.commitText(done, 1)
+        else ic.finishComposingText()
     }
 
     /** VK → Android keycode for keys that must be real events, else 0. */

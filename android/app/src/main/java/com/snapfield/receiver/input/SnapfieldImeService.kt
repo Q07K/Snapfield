@@ -25,7 +25,6 @@ class SnapfieldImeService : InputMethodService() {
         private const val VK_BACK = 0x08
         private const val VK_TAB = 0x09
         private const val VK_RETURN = 0x0D
-        private const val VK_ESCAPE = 0x1B
         private const val VK_SPACE = 0x20
     }
 
@@ -142,12 +141,12 @@ class SnapfieldImeService : InputMethodService() {
         else ic.finishComposingText()
     }
 
-    /** VK → Android keycode for keys that must be real events, else 0. */
+    /** VK → Android keycode for keys that must be real events, else 0.
+    /// (Esc never reaches here — the service maps it to the global Back.) */
     private fun specialKeyCode(vk: Int): Int = when (vk) {
         VK_BACK -> KeyEvent.KEYCODE_DEL
         VK_RETURN -> KeyEvent.KEYCODE_ENTER
         VK_TAB -> KeyEvent.KEYCODE_TAB
-        VK_ESCAPE -> KeyEvent.KEYCODE_ESCAPE
         0x25 -> KeyEvent.KEYCODE_DPAD_LEFT
         0x26 -> KeyEvent.KEYCODE_DPAD_UP
         0x27 -> KeyEvent.KEYCODE_DPAD_RIGHT

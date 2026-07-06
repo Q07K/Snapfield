@@ -137,7 +137,11 @@ class ReceiverService : Service() {
                 setStatus("'${msg.machineId ?: "controller"}'에 연결됨. 제어 대기 중.")
             }
             MsgType.CursorMove -> SnapfieldAccessibilityService.instance?.moveCursor(msg.x, msg.y)
-            MsgType.MouseButton -> if (msg.button == 0) SnapfieldAccessibilityService.instance?.onButton(msg.down)
+            MsgType.MouseButton -> when (msg.button) {
+                0 -> SnapfieldAccessibilityService.instance?.onButton(msg.down)
+                1 -> if (msg.down) SnapfieldAccessibilityService.instance?.goBack()    // 우클릭 = 뒤로
+                2 -> if (msg.down) SnapfieldAccessibilityService.instance?.goRecents() // 휠클릭 = 최근 앱
+            }
             MsgType.MouseWheel -> SnapfieldAccessibilityService.instance?.onWheel(msg.wheelDelta, msg.horizontal)
             MsgType.ControlEnter -> {
                 stateKind = "live"
@@ -153,12 +157,7 @@ class ReceiverService : Service() {
             }
             MsgType.Clipboard -> msg.text?.let { applyClipboard(it) }
             MsgType.ClipboardImage -> msg.text?.let { applyClipboardImage(it) }
-            MsgType.Key -> when {
-                msg.vk == 0x2C && msg.down -> capturePrtScn() // PrtScn → this screen onto the PC clipboard
-                (msg.vk == 0x5B || msg.vk == 0x5C) && msg.down -> // Win → home
-                    SnapfieldAccessibilityService.instance?.goHome()
-                else -> com.snapfield.receiver.input.SnapfieldImeService.instance?.onKey(msg.vk, msg.down)
-            }
+            MsgType.Key -> routeKey(msg.vk, msg.down)
             else -> { /* Layout / files: not consumed on Android yet */ }
         }
     }
@@ -267,10 +266,58 @@ class ReceiverService : Service() {
         } catch (_: Exception) { /* decode/write failed — skip */ }
     }
 
+    // ── PC keys → Android-flavoured actions ───────────────────────────────────
+    // Device-wide keys resolve here (the IME only reaches focused text fields):
+    //   Esc = 뒤로, Win = 홈, Alt+Tab = 최근 앱, PrtScn = 캡처→PC 클립보드,
+    //   볼륨/음소거/미디어 키 = 폰 볼륨/미디어. Everything else types via the IME.
+    @Volatile private var altDown = false
+
+    private fun routeKey(vk: Int, down: Boolean) {
+        when (vk) {
+            0x12, 0xA4, 0xA5 -> altDown = down // track, then fall through to the IME
+        }
+        when {
+            vk == 0x2C && down -> { capturePrtScn(); return }                       // PrtScn
+            vk == 0x1B && down -> { SnapfieldAccessibilityService.instance?.goBack(); return }   // Esc
+            (vk == 0x5B || vk == 0x5C) && down -> { SnapfieldAccessibilityService.instance?.goHome(); return } // Win
+            vk == 0x09 && down && altDown -> { SnapfieldAccessibilityService.instance?.goRecents(); return }   // Alt+Tab
+            vk == 0xAF && down -> { adjustVolume(android.media.AudioManager.ADJUST_RAISE); return }
+            vk == 0xAE && down -> { adjustVolume(android.media.AudioManager.ADJUST_LOWER); return }
+            vk == 0xAD && down -> { adjustVolume(android.media.AudioManager.ADJUST_TOGGLE_MUTE); return }
+            vk == 0xB3 && down -> { mediaKey(android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE); return }
+            vk == 0xB0 && down -> { mediaKey(android.view.KeyEvent.KEYCODE_MEDIA_NEXT); return }
+            vk == 0xB1 && down -> { mediaKey(android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS); return }
+            vk in intArrayOf(0x2C, 0x1B, 0x5B, 0x5C, 0xAD, 0xAE, 0xAF, 0xB0, 0xB1, 0xB3) -> return // their key-ups
+        }
+        com.snapfield.receiver.input.SnapfieldImeService.instance?.onKey(vk, down)
+    }
+
+    private fun adjustVolume(direction: Int) = main.post {
+        try {
+            (getSystemService(AUDIO_SERVICE) as android.media.AudioManager)
+                .adjustStreamVolume(android.media.AudioManager.STREAM_MUSIC, direction,
+                    android.media.AudioManager.FLAG_SHOW_UI)
+        } catch (_: Exception) {}
+    }
+
+    private fun mediaKey(keyCode: Int) = main.post {
+        try {
+            val am = getSystemService(AUDIO_SERVICE) as android.media.AudioManager
+            am.dispatchMediaKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, keyCode))
+            am.dispatchMediaKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, keyCode))
+        } catch (_: Exception) {}
+    }
+
     /** PrtScn: capture this screen and put it on the PC clipboard (Windows semantics). */
     private fun capturePrtScn() {
         SnapfieldAccessibilityService.instance?.captureScreenPng { png ->
-            if (png == null || png.size > 8 * 1024 * 1024) return@captureScreenPng
+            if (png == null) {
+                // Most common cause: the canTakeScreenshot capability is read when
+                // the service is enabled — after an app update it needs a re-toggle.
+                setStatus("화면 캡처 실패 — 접근성 권한을 껐다 다시 켜보세요.")
+                return@captureScreenPng
+            }
+            if (png.size > 8 * 1024 * 1024) { setStatus("캡처가 너무 큽니다(>8MB) — 전송 생략."); return@captureScreenPng }
             lastImageMd5 = md5(png)
             link?.send(NetMessage(type = MsgType.ClipboardImage,
                 text = android.util.Base64.encodeToString(png, android.util.Base64.NO_WRAP)))

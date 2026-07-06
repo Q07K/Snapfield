@@ -216,4 +216,14 @@ class SnapfieldAccessibilityService : AccessibilityService() {
     fun goHome() = main.post {
         try { performGlobalAction(GLOBAL_ACTION_HOME) } catch (_: Exception) {}
     }
+
+    /** Esc / mouse right-click → Android back (the Bluetooth-mouse convention). */
+    fun goBack() = main.post {
+        try { performGlobalAction(GLOBAL_ACTION_BACK) } catch (_: Exception) {}
+    }
+
+    /** Alt+Tab / mouse middle-click → the recents switcher. */
+    fun goRecents() = main.post {
+        try { performGlobalAction(GLOBAL_ACTION_RECENTS) } catch (_: Exception) {}
+    }
 }

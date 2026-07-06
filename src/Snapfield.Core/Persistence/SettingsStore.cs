@@ -30,6 +30,13 @@ public sealed record AppSettings
 
     /// <summary>Machines this PC has controlled, most-recent first.</summary>
     public List<RecentConnection> Recent { get; init; } = new();
+
+    /// <summary>User-given display names, keyed by machine id (e.g. VICS_GYUHYEONG → 사무실 PC).</summary>
+    public Dictionary<string, string> Nicknames { get; init; } = new();
+
+    /// <summary>Last main-window size (0 = never saved; defaults apply).</summary>
+    public double WindowWidth { get; init; }
+    public double WindowHeight { get; init; }
 }
 
 public static class SettingsStore

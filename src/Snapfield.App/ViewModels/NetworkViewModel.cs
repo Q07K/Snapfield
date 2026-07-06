@@ -45,6 +45,7 @@ public sealed class NetworkViewModel : ObservableObject
         ConnectCommand = new RelayCommand(Connect, () => !string.IsNullOrWhiteSpace(RemoteHost) && !string.IsNullOrWhiteSpace(ControllerPin));
         ConnectRecentCommand = new RelayCommand<RecentConnection>(ConnectRecent, r => r is not null);
         PickDiscoveredCommand = new RelayCommand<DiscoveredItem>(PickDiscovered, d => d is not null);
+        AddDeviceCommand = new RelayCommand<AddDeviceItem>(AddDevice, i => i is not null);
         ShowNewFormCommand = new RelayCommand(() => { ShowAdvanced = false; ShowNewForm = true; });
         CloseSheetCommand = new RelayCommand(() => ShowNewForm = false);
         ToggleAdvancedCommand = new RelayCommand(() => ShowAdvanced = !ShowAdvanced);
@@ -59,9 +60,11 @@ public sealed class NetworkViewModel : ObservableObject
             s = s with { ReceiverPin = Random.Shared.Next(100000, 999999).ToString() };
             SettingsStore.Save(s);
         }
-        ReceiverPin = s.ReceiverPin;
+        _receiverPin = s.ReceiverPin;
         _controllerPin = s.ControllerPin;
+        _nicknames = new Dictionary<string, string>(s.Nicknames);
         foreach (var r in s.Recent) RecentConnections.Add(r);
+        RebuildAddDevices();
     }
 
     public ICommand ChooseControllerCommand { get; }
@@ -71,6 +74,7 @@ public sealed class NetworkViewModel : ObservableObject
     public ICommand ConnectCommand { get; }
     public ICommand ConnectRecentCommand { get; }
     public ICommand PickDiscoveredCommand { get; }
+    public ICommand AddDeviceCommand { get; }
     public ICommand ShowNewFormCommand { get; }
     public ICommand CloseSheetCommand { get; }
     public ICommand ToggleAdvancedCommand { get; }
@@ -78,15 +82,107 @@ public sealed class NetworkViewModel : ObservableObject
 
     public string MachineName { get; }
     public string LocalIps { get; }
-    public string ReceiverPin { get; }
+
+    private string _receiverPin = "";
+    public string ReceiverPin { get => _receiverPin; private set => SetField(ref _receiverPin, value); }
+
+    /// <summary>Issues a fresh pairing code. Applies from the next handshake on —
+    /// an established session keeps running (encryption is per-connection).</summary>
+    public void RegenerateReceiverPin()
+    {
+        var pin = Random.Shared.Next(100000, 999999).ToString();
+        ReceiverPin = pin;
+        SettingsStore.Save(SettingsStore.Load() with { ReceiverPin = pin });
+        if (_session is not null) _session.ReceiverPin = pin;
+        Toast?.Invoke("연결 코드 재발급", "새 코드는 다음 연결부터 적용됩니다. 이미 연결된 기기는 유지됩니다.", "Ok");
+    }
+
+    // ── Nicknames (display names for machines) ───────────────────────────────
+    private readonly Dictionary<string, string> _nicknames;
+
+    /// <summary>Display name for a machine: its nickname if one is set, else the id.</summary>
+    public string Nick(string machineId) =>
+        _nicknames.TryGetValue(machineId, out var n) && !string.IsNullOrWhiteSpace(n) ? n : machineId;
+
+    /// <summary>Raised after a nickname changes, for views that resolve names lazily
+    /// (e.g. the calibration canvas labels).</summary>
+    public event Action? NicknamesChanged;
+
+    public void SetNickname(string machineId, string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) _nicknames.Remove(machineId);
+        else _nicknames[machineId] = name.Trim();
+        SettingsStore.Save(SettingsStore.Load() with { Nicknames = new Dictionary<string, string>(_nicknames) });
+        RebuildPeerViews();
+        RebuildAddDevices();
+        UpdatePill();
+        NicknamesChanged?.Invoke();
+    }
+
     public ObservableCollection<RecentConnection> RecentConnections { get; } = new();
-    public bool HasRecent => RecentConnections.Count > 0;
-    public bool NoRecent => RecentConnections.Count == 0;
+
+    // ── "기기 추가" — discovered + recents merged into ONE list ───────────────
+    // The same machine used to show twice (its beacon AND its recent-by-IP row).
+    // Merge by host: online rows come from discovery, offline rows from history,
+    // and machines that are already connected don't show at all.
+
+    /// <summary>One row of the add-device list.</summary>
+    public sealed class AddDeviceItem
+    {
+        public string Name { get; init; } = "";
+        public string Host { get; init; } = "";
+        public int Port { get; init; }
+        public bool Online { get; init; }
+        public string Pin { get; init; } = "";       // saved pairing code, "" = must be typed
+        public string HostPort => $"{Host}:{Port}";
+        public string ActionText => Pin.Length > 0 ? "연결 ›" : "코드 입력 ›";
+    }
+
+    public ObservableCollection<AddDeviceItem> AddDevices { get; } = new();
+    public bool HasAddDevices => AddDevices.Count > 0;
+    public bool NoAddDevices => AddDevices.Count == 0;
+
+    /// <summary>host → machine id, learned from Hello (used to hide connected recents).</summary>
+    private readonly Dictionary<string, string> _machineByHost = new(StringComparer.OrdinalIgnoreCase);
+
+    private void RebuildAddDevices()
+    {
+        var connected = ConnectedPeers.ToHashSet();
+        var items = new List<AddDeviceItem>();
+
+        foreach (var d in Discovered) // online first
+        {
+            if (connected.Contains(d.Name)) continue; // already on the plane
+            var rec = RecentConnections.FirstOrDefault(r => r.Host.Equals(d.Host, StringComparison.OrdinalIgnoreCase));
+            items.Add(new AddDeviceItem { Name = Nick(d.Name), Host = d.Host, Port = d.Port, Online = true, Pin = rec?.Pin ?? "" });
+        }
+        foreach (var r in RecentConnections) // history not currently beaconing
+        {
+            if (items.Any(i => i.Host.Equals(r.Host, StringComparison.OrdinalIgnoreCase))) continue;
+            if (_machineByHost.TryGetValue(r.Host, out var mid) && connected.Contains(mid)) continue;
+            items.Add(new AddDeviceItem { Name = Nick(r.Name), Host = r.Host, Port = r.Port, Online = false, Pin = r.Pin });
+        }
+
+        AddDevices.Clear();
+        foreach (var i in items) AddDevices.Add(i);
+        OnPropertyChanged(nameof(HasAddDevices));
+        OnPropertyChanged(nameof(NoAddDevices));
+    }
+
+    private void AddDevice(AddDeviceItem? item)
+    {
+        if (item is null) return;
+        RemoteHost = item.Host;
+        Port = item.Port;
+        if (item.Pin.Length > 0) { ControllerPin = item.Pin; Connect(); } // one tap
+        else { ShowAdvanced = false; ShowNewForm = true; }                // ask for the code
+    }
 
     /// <summary>A receiver found on the LAN via its beacon.</summary>
     public sealed class DiscoveredItem
     {
-        public string Name { get; set; } = "";
+        public string Name { get; set; } = "";     // machine id from the beacon
+        public string Display { get; set; } = "";  // nickname when one is set
         public string Host { get; set; } = "";
         public int Port { get; set; }
         public long LastSeen { get; set; }
@@ -99,9 +195,40 @@ public sealed class NetworkViewModel : ObservableObject
 
     private DiscoveryListener? _discovery;
 
-    /// <summary>Receivers currently connected (controller hub can hold several).</summary>
+    /// <summary>Receivers currently connected (controller hub can hold several).
+    /// Raw machine ids — the calibration plane keys off these.</summary>
     public ObservableCollection<string> ConnectedPeers { get; } = new();
     public bool HasPeers => ConnectedPeers.Count > 0;
+
+    /// <summary>One connected peer as shown in lists: nickname up front, machine id
+    /// as the small print when a nickname hides it.</summary>
+    public sealed class PeerView
+    {
+        public string Id { get; init; } = "";
+        public string Name { get; init; } = "";
+        public string Machine { get; init; } = ""; // empty when Name == Id
+    }
+
+    public ObservableCollection<PeerView> ConnectedPeerViews { get; } = new();
+
+    private void RebuildPeerViews()
+    {
+        ConnectedPeerViews.Clear();
+        foreach (var id in ConnectedPeers)
+        {
+            var name = Nick(id);
+            ConnectedPeerViews.Add(new PeerView { Id = id, Name = name, Machine = name == id ? "" : id });
+        }
+    }
+
+    /// <summary>Drops one receiver from the hub (tray / list action).</summary>
+    public void DisconnectPeer(string machineId)
+    {
+        _manualDrops.Add(machineId); // so the drop toasts as intended, not as a failure
+        _session?.DisconnectPeer(machineId);
+    }
+
+    private readonly HashSet<string> _manualDrops = new();
 
     /// <summary>Transient notification for the toast stack: (title, message, kind).
     /// Kind is one of Ok / Warn / Err / Tip. Always raised on the UI thread.</summary>
@@ -128,8 +255,8 @@ public sealed class NetworkViewModel : ObservableObject
             else { text = "연결 대기 중"; kind = "Ok"; }
         }
         else if (_remoteActive) { text = $"원격 조작 중 · {_activeRemoteName}"; kind = "Live"; }
-        else if (ConnectedPeers.Count == 1) { text = $"{ConnectedPeers[0]} 연결됨"; kind = "Ok"; }
-        else if (ConnectedPeers.Count > 1) { text = $"{ConnectedPeers[0]} 외 {ConnectedPeers.Count - 1}대 연결됨"; kind = "Ok"; }
+        else if (ConnectedPeers.Count == 1) { text = $"{Nick(ConnectedPeers[0])} 연결됨"; kind = "Ok"; }
+        else if (ConnectedPeers.Count > 1) { text = $"{Nick(ConnectedPeers[0])} 외 {ConnectedPeers.Count - 1}대 연결됨"; kind = "Ok"; }
         else { text = "연결 중 …"; kind = "Off"; }
         PillText = text;
         PillKind = kind;
@@ -290,6 +417,7 @@ public sealed class NetworkViewModel : ObservableObject
         if (Discovered.Count > 0) Discovered.Clear();
         OnPropertyChanged(nameof(HasDiscovered));
         OnPropertyChanged(nameof(Scanning));
+        RebuildAddDevices();
     }
 
     private void OnPeerFound(DiscoveredPeer peer) =>
@@ -304,11 +432,12 @@ public sealed class NetworkViewModel : ObservableObject
 
             var existing = Discovered.FirstOrDefault(x => x.Host == peer.Host);
             if (existing is null)
-                Discovered.Add(new DiscoveredItem { Name = peer.Name, Host = peer.Host, Port = peer.Port, LastSeen = now });
-            else { existing.Name = peer.Name; existing.Port = peer.Port; existing.LastSeen = now; }
+                Discovered.Add(new DiscoveredItem { Name = peer.Name, Display = Nick(peer.Name), Host = peer.Host, Port = peer.Port, LastSeen = now });
+            else { existing.Name = peer.Name; existing.Display = Nick(peer.Name); existing.Port = peer.Port; existing.LastSeen = now; }
 
             OnPropertyChanged(nameof(HasDiscovered));
             OnPropertyChanged(nameof(Scanning));
+            RebuildAddDevices();
         });
 
     private void Remember(string host, int port, string pin, string name)
@@ -321,8 +450,7 @@ public sealed class NetworkViewModel : ObservableObject
     {
         RecentConnections.Clear();
         foreach (var r in SettingsStore.Load().Recent) RecentConnections.Add(r);
-        OnPropertyChanged(nameof(HasRecent));
-        OnPropertyChanged(nameof(NoRecent));
+        RebuildAddDevices();
     }
 
     public void RestoreLastSession()
@@ -349,6 +477,7 @@ public sealed class NetworkViewModel : ObservableObject
         _session.EngineStatus += OnEngineStatus;
         _session.ReceiverActivity += OnReceiverActivity;
         _session.PeersChanged += OnPeersChanged;
+        _session.PeerIdentified += OnPeerIdentified;
         _session.AuthFailed += OnAuthFailed;
         if (monitors.Count == 0)
             Status = "경고: 이 PC의 모니터를 하나도 인식하지 못했습니다!";
@@ -362,6 +491,7 @@ public sealed class NetworkViewModel : ObservableObject
         IsBeingControlled = false;
         _remoteActive = false;
         ConnectedPeers.Clear();
+        ConnectedPeerViews.Clear();
         OnPropertyChanged(nameof(HasPeers));
         UpdatePill();
         Status = "";
@@ -396,14 +526,36 @@ public sealed class NetworkViewModel : ObservableObject
             // clears the list directly and never comes through here.
             var old = ConnectedPeers.ToList();
             foreach (var n in names.Where(n => !old.Contains(n)))
-                Toast?.Invoke($"{n} 연결됨", "커서를 화면 끝으로 밀어 넘어가세요.", "Ok");
+                Toast?.Invoke($"{Nick(n)} 연결됨", "커서를 화면 끝으로 밀어 넘어가세요.", "Ok");
             foreach (var n in old.Where(o => !names.Contains(o)))
-                Toast?.Invoke($"{n} 연결 끊김", "재연결을 시도합니다 …", "Err");
+            {
+                if (_manualDrops.Remove(n))
+                    Toast?.Invoke($"{Nick(n)} 연결 해제", "요청에 따라 끊었습니다.", "Ok");
+                else
+                    Toast?.Invoke($"{Nick(n)} 연결 끊김", "재연결을 시도합니다 …", "Err");
+            }
 
             ConnectedPeers.Clear();
             foreach (var n in names) ConnectedPeers.Add(n);
+            RebuildPeerViews();
+            RebuildAddDevices(); // connected machines leave the add list (and return on drop)
             OnPropertyChanged(nameof(HasPeers));
             UpdatePill();
+        });
+
+    /// <summary>Post-Hello we finally know which machine answers at that address —
+    /// promote the recent entry's name from a bare IP to the machine id.</summary>
+    private void OnPeerIdentified(string host, int port, string machineId) =>
+        Application.Current?.Dispatcher.BeginInvoke(() =>
+        {
+            _machineByHost[host] = machineId;
+            var r = RecentConnections.FirstOrDefault(x => x.Host.Equals(host, StringComparison.OrdinalIgnoreCase));
+            if (r is not null && r.Name != machineId)
+            {
+                SettingsStore.RememberConnection(r with { Name = machineId });
+                ReloadRecent();
+            }
+            else RebuildAddDevices();
         });
 
     private void OnEngineStatus(EngineStatus s) =>

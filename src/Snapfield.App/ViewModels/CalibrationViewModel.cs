@@ -114,6 +114,24 @@ public sealed class CalibrationViewModel : ObservableObject
     private string _statusText = "";
     public string StatusText { get => _statusText; private set => SetField(ref _statusText, value); }
 
+    // ── Machine display names ─────────────────────────────────────────────────
+    // The canvas shows nicknames when set (회사, 거실 노트북 …); the resolver is
+    // wired in by the shell since nicknames live with the network view model.
+    private Func<string, string>? _nameResolver;
+
+    public void SetNameResolver(Func<string, string> resolver)
+    {
+        _nameResolver = resolver;
+        RefreshMachineLabels();
+    }
+
+    public string ResolveMachineName(string machineId) => _nameResolver?.Invoke(machineId) ?? machineId;
+
+    public void RefreshMachineLabels()
+    {
+        foreach (var m in Monitors) m.RaiseMachineLabelChanged();
+    }
+
     // ── Selection (drives the inspector panel) ───────────────────────────────
     private MonitorViewModel? _selected;
     public MonitorViewModel? SelectedMonitor
@@ -446,6 +464,47 @@ public sealed class CalibrationViewModel : ObservableObject
         m.IsLaptop = !m.IsLaptop;
         Save();
         StatusText = $"'{m.DisplayName}'을(를) {m.KindLabel}(으)로 변경했습니다.";
+    }
+
+    // ── Layout presets (집 / 사무실 / …) ─────────────────────────────────────
+    public void SavePreset(string name)
+    {
+        name = name.Trim();
+        if (!_isEditable || name.Length == 0) return;
+        PresetStore.Upsert(new LayoutPreset
+        {
+            Name = name,
+            Monitors = Monitors.Select(m => MonitorState.From(m.ToMonitorInfo())).ToList(),
+        });
+        StatusText = $"프리셋 '{name}' 저장됨.";
+    }
+
+    /// <summary>Applies a preset's placements to matching monitors on the current
+    /// plane (matched by machine/device key); unmatched monitors keep their spot.</summary>
+    public void ApplyPreset(string name)
+    {
+        if (!_isEditable) { StatusText = "배치는 조작 기기에서만 변경할 수 있습니다."; return; }
+        var preset = PresetStore.Load().FirstOrDefault(p => p.Name == name);
+        if (preset is null) return;
+
+        var matched = 0;
+        foreach (var s in preset.Monitors)
+        {
+            var vm = Monitors.FirstOrDefault(m => m.MachineId == s.MachineId && m.DeviceId == s.DeviceId);
+            if (vm is null) continue;
+            vm.ApplyPlacement(s.PhysicalXMm, s.PhysicalYMm, s.PhysicalWidthMm, s.PhysicalHeightMm);
+            matched++;
+        }
+        if (matched == 0) { StatusText = $"'{name}'와 일치하는 모니터가 지금 평면에 없습니다."; return; }
+        RecomputeTransform();
+        PersistCurrent(); // auto-save → a live session re-routes immediately
+        StatusText = $"프리셋 '{name}' 적용됨 — 모니터 {matched}개.";
+    }
+
+    public void DeletePreset(string name)
+    {
+        PresetStore.Delete(name);
+        StatusText = $"프리셋 '{name}' 삭제됨.";
     }
 
     /// <summary>Removes a REMOTE monitor from the plane (a stale peer). Local

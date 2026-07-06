@@ -35,6 +35,10 @@ public sealed class MainViewModel : ObservableObject
 
         Network.Toast += ShowToast;
 
+        // Canvas labels use nicknames too, and follow renames live.
+        Calibration.SetNameResolver(Network.Nick);
+        Network.NicknamesChanged += Calibration.RefreshMachineLabels;
+
         // Show a remote's monitors on the calibration plane only while it's connected.
         Network.ConnectedPeers.CollectionChanged += (_, _) =>
             Calibration.SetActiveRemotes(Network.ConnectedPeers.ToList());

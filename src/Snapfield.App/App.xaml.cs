@@ -27,6 +27,14 @@ public partial class App : Application
         MonitorEnumerator.EnableDpiAwareness();
         base.OnStartup(e);
 
+        // The transparent capture-cursor is a SYSTEM-wide change that survives a
+        // crash/kill — heal it unconditionally on every launch, and put the
+        // cursor back before dying on any unhandled failure.
+        Snapfield.Platform.Input.CursorHider.ForceRestore();
+        AppDomain.CurrentDomain.UnhandledException += (_, _) => Snapfield.Platform.Input.CursorHider.ForceRestore();
+        AppDomain.CurrentDomain.ProcessExit += (_, _) => Snapfield.Platform.Input.CursorHider.ForceRestore();
+        DispatcherUnhandledException += (_, _) => Snapfield.Platform.Input.CursorHider.ForceRestore();
+
         Network = new NetworkViewModel();
         _tray = new TrayManager(this);
 

@@ -43,7 +43,9 @@ public sealed class NetworkSession : IDisposable
     private double _sensitivity = 1.0;
 
     public PeerRole Role { get; private set; } = PeerRole.None;
-    public string ReceiverPin { get; init; } = "";
+    /// <summary>Mutable: a regenerated code applies from the next handshake on
+    /// (the receiver conn re-reads it on every listen cycle).</summary>
+    public string ReceiverPin { get; set; } = "";
     public string ControllerPin { get; init; } = "";
     public int LocalMonitorCount => _localMonitors.Count;
 
@@ -57,6 +59,7 @@ public sealed class NetworkSession : IDisposable
     public event Action<EngineStatus>? EngineStatus;
     public event Action<long, int, int>? ReceiverActivity;             // (count, x, y) — receiver
     public event Action<IReadOnlyList<string>>? PeersChanged;          // connected receiver names — controller
+    public event Action<string, int, string>? PeerIdentified;          // (host, port, machineId) post-Hello — controller
     public event Action<string>? AuthFailed;                           // wrong pin, conn dropped — controller
 
     public NetworkSession(string localMachineId, IReadOnlyList<MonitorInfo> localMonitors)
@@ -113,6 +116,7 @@ public sealed class NetworkSession : IDisposable
                     EnsureClipboard();
                     RebuildEngine();
                     RaisePeers();
+                    PeerIdentified?.Invoke(c.Host, c.Port, c.MachineId); // lets the UI name its recents
                     Status?.Invoke($"'{c.MachineId}' 연결됨 — 총 {ConnectedCount}대 조작 중.");
                 }
                 else
@@ -175,6 +179,7 @@ public sealed class NetworkSession : IDisposable
         {
             c.Monitors = new List<MonitorInfo>(); // drop its monitors from the plane
             RebuildEngine();
+            ReleaseIfActive(c.MachineId); // cursor was ON that machine → yank it home NOW
         }
         RaisePeers(); // reflect the drop (hides its monitors on both ends' canvases)
 
@@ -202,6 +207,41 @@ public sealed class NetworkSession : IDisposable
         var delay = Role == PeerRole.Receiver ? RelistenDelayMs : ReconnectDelayMs;
         Status?.Invoke($"'{(c.MachineId.Length > 0 ? c.MachineId : c.Host)}' 연결 끊김: {reason} — {delay / 1000.0:0.#}초 후 재시도 …");
         c.ScheduleReconnect(delay);
+    }
+
+    /// <summary>Controller hub: drops ONE receiver, keeping the rest (no retry —
+    /// this is an explicit user action, unlike a link failure).</summary>
+    public void DisconnectPeer(string machineId)
+    {
+        Conn? victim;
+        lock (_lock)
+        {
+            victim = _conns.FirstOrDefault(c => c.MachineId == machineId);
+            if (victim is not null) _conns.Remove(victim);
+        }
+        if (victim is null) return;
+        victim.Stop();
+        RebuildEngine(); // plane loses its monitors
+        ReleaseIfActive(machineId);
+        RaisePeers();
+        Status?.Invoke($"'{machineId}' 연결을 끊었습니다.");
+    }
+
+    /// <summary>If the cursor is currently ON the given (now-gone) machine, force
+    /// it back to a local monitor. Without this, a dead peer leaves the local
+    /// cursor parked AND transparent — invisible until the user blindly wiggles
+    /// far enough to cross back.</summary>
+    private void ReleaseIfActive(string machineId)
+    {
+        if (_activeRemote != machineId) return;
+        _activeRemote = null;
+        lock (_engineLock) _engine?.ForceReleaseToLocal();
+    }
+
+    /// <summary>Machine-switch hotkey target list is engine-side; expose the jump.</summary>
+    public void JumpToMachine(string machineId)
+    {
+        lock (_engineLock) _engine?.JumpToMachine(machineId);
     }
 
     // ── controller: engine + routing ────────────────────────────────────────
@@ -388,7 +428,7 @@ public sealed class NetworkSession : IDisposable
             link.MessageReceived += m => { if (Current(gen)) _s.OnMessage(this, m); };
             link.Disconnected += r => { if (Current(gen)) _s.OnDown(this, r); };
             if (Initiator) link.Connect(Host, Port, _pin);
-            else link.Listen(Port, _pin);
+            else link.Listen(Port, _s.ReceiverPin); // re-read: a regenerated code applies on re-listen
         }
 
         public void ScheduleReconnect(int delayMs)

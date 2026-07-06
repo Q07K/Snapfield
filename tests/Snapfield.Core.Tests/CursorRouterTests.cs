@@ -29,6 +29,22 @@ public class CursorRouterTests
         new("A", new DesktopLayout(new[] { Local(), Remote() }));
 
     [Fact]
+    public void JumpToMachine_SeatsVirtualCursorOnRemoteCentre_AndBack()
+    {
+        var r = Router();
+        r.SeatLocal(1920, 1080); // centre of local
+
+        var jump = r.JumpToMachine("B");
+        Assert.Equal(RouteTransition.ToRemote, jump.Transition);
+        Assert.Equal("B", jump.Owner!.MachineId);
+        Assert.Equal(597.6 + 531.4 / 2, r.Virtual.XMm, 1); // centre of B
+
+        var back = r.JumpToMachine("A");
+        Assert.Equal(RouteTransition.ToLocal, back.Transition);
+        Assert.Equal("A", back.Owner!.MachineId);
+    }
+
+    [Fact]
     public void PressingRightEdge_WithRemoteBeyond_HandsOffToRemote()
     {
         var r = Router();

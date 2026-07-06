@@ -35,9 +35,17 @@ public partial class MainWindow : Window
             RefreshPinSlots();
         };
 
+        // Remember the window size across runs (never smaller than the minimums).
+        var s = Snapfield.Core.Persistence.SettingsStore.Load();
+        if (s.WindowWidth >= MinWidth) Width = s.WindowWidth;
+        if (s.WindowHeight >= MinHeight) Height = s.WindowHeight;
+
         // Tray-resident: closing hides to the tray; real exit is the tray menu.
         Closing += (_, e) =>
         {
+            if (WindowState == WindowState.Normal)
+                Snapfield.Core.Persistence.SettingsStore.Save(
+                    Snapfield.Core.Persistence.SettingsStore.Load() with { WindowWidth = ActualWidth, WindowHeight = ActualHeight });
             if (App.Current.IsExiting) return;
             e.Cancel = true;
             Hide();
@@ -150,6 +158,63 @@ public partial class MainWindow : Window
     {
         if ((sender as FrameworkElement)?.DataContext is ToastItem t)
             ((MainViewModel)DataContext).DismissToast(t);
+    }
+
+    /// <summary>✕ on a connected-device row: drop just this receiver.</summary>
+    private void DisconnectPeer_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is NetworkViewModel.PeerView p)
+            Net?.DisconnectPeer(p.Id);
+    }
+
+    /// <summary>✎ on a connected-device row: give the machine a display name.</summary>
+    private void RenamePeer_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not NetworkViewModel.PeerView p || Net is not { } net) return;
+        var current = p.Machine.Length > 0 ? p.Name : ""; // aliased → edit alias; else start empty
+        var dlg = new TextInputWindow("기기 별명", $"'{p.Id}'을(를) 부를 이름을 입력하세요.\n비워 두면 기계 이름으로 돌아갑니다.", current) { Owner = this };
+        if (dlg.ShowDialog() == true) net.SetNickname(p.Id, dlg.Value);
+    }
+
+    /// <summary>프리셋 ▾ — apply / save / delete named layout snapshots.</summary>
+    private void PresetMenu_Click(object sender, RoutedEventArgs e)
+    {
+        var presets = Snapfield.Core.Persistence.PresetStore.Load();
+        var menu = new ContextMenu();
+
+        foreach (var p in presets)
+        {
+            var name = p.Name;
+            var item = new MenuItem { Header = name, InputGestureText = $"{p.Monitors.Count}개 모니터" };
+            item.Click += (_, _) => Cal.ApplyPreset(name);
+            menu.Items.Add(item);
+        }
+        if (presets.Count > 0) menu.Items.Add(new Separator());
+
+        var save = new MenuItem { Header = "현재 배치를 프리셋으로 저장…" };
+        save.Click += (_, _) =>
+        {
+            var dlg = new TextInputWindow("배치 프리셋 저장", "이 배치의 이름을 입력하세요 (예: 집, 사무실).\n같은 이름이 있으면 덮어씁니다.", "") { Owner = this };
+            if (dlg.ShowDialog() == true && !string.IsNullOrWhiteSpace(dlg.Value)) Cal.SavePreset(dlg.Value!);
+        };
+        menu.Items.Add(save);
+
+        if (presets.Count > 0)
+        {
+            var del = new MenuItem { Header = "프리셋 삭제" };
+            foreach (var p in presets)
+            {
+                var name = p.Name;
+                var item = new MenuItem { Header = name };
+                item.Click += (_, _) => Cal.DeletePreset(name);
+                del.Items.Add(item);
+            }
+            menu.Items.Add(del);
+        }
+
+        menu.PlacementTarget = (UIElement)sender;
+        menu.Placement = System.Windows.Controls.Primitives.PlacementMode.Top;
+        menu.IsOpen = true;
     }
 
     // ── Pin boxes: one invisible TextBox drives six drawn digit boxes ─────────

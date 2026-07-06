@@ -5,7 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:vm="clr-namespace:Snapfield.App.ViewModels"
         mc:Ignorable="d"
-        Title="Snapfield" Height="600" Width="760" Background="#0A0A11">
+        Title="Snapfield" Height="680" Width="780" MinHeight="560" MinWidth="680" Background="#0A0A11">
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="B2V"/>
 
@@ -276,97 +276,132 @@
                 </Grid>
 
                 <Grid Margin="18">
-                    <!-- controller -->
-                    <StackPanel Visibility="{Binding IsControllerPage, Converter={StaticResource B2V}}">
+                    <!-- controller: header + session block stay fixed on top;
+                         discovery/recents/add scroll below (they can grow) -->
+                    <DockPanel Visibility="{Binding IsControllerPage, Converter={StaticResource B2V}}">
+                        <StackPanel DockPanel.Dock="Top">
                         <StackPanel Orientation="Horizontal">
                             <Button Content="← 뒤로" Command="{Binding BackCommand}" Padding="10,5"/>
                             <TextBlock Text="조작 기기" Foreground="#EAECF6" FontSize="15" FontWeight="Bold" VerticalAlignment="Center" Margin="12,0,0,0"/>
                         </StackPanel>
 
                         <!-- connected receivers (the hub can hold several at once) -->
-                        <StackPanel Visibility="{Binding HasPeers, Converter={StaticResource B2V}}" Margin="0,14,0,0">
-                            <Border CornerRadius="11" Padding="12" Background="{Binding SideBrush}">
-                                <StackPanel>
-                                    <TextBlock Text="{Binding Side}" Foreground="White" FontSize="14" FontWeight="Bold" HorizontalAlignment="Center"/>
-                                    <TextBlock Text="{Binding Detail}" Foreground="#EEE" FontSize="11" HorizontalAlignment="Center" Margin="0,4,0,0" TextWrapping="Wrap" TextAlignment="Center"/>
-                                </StackPanel>
+                        <StackPanel Visibility="{Binding HasPeers, Converter={StaticResource B2V}}" Margin="0,12,0,0">
+                            <!-- one-line cursor strip — the header pill carries the rest -->
+                            <Border CornerRadius="8" Padding="11,6" BorderThickness="1">
+                                <Border.Style><Style TargetType="Border">
+                                    <Setter Property="Background" Value="#131A30"/>
+                                    <Setter Property="BorderBrush" Value="#2A3A66"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding PillKind}" Value="Live">
+                                            <Setter Property="Background" Value="#221A0F"/>
+                                            <Setter Property="BorderBrush" Value="#4A3A20"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style></Border.Style>
+                                <DockPanel>
+                                    <TextBlock DockPanel.Dock="Right" Text="{Binding Detail}" FontSize="10.5" VerticalAlignment="Center">
+                                        <TextBlock.Style><Style TargetType="TextBlock">
+                                            <Setter Property="Foreground" Value="#8FA8E0"/>
+                                            <Style.Triggers><DataTrigger Binding="{Binding PillKind}" Value="Live">
+                                                <Setter Property="Foreground" Value="#E0BE8F"/></DataTrigger></Style.Triggers>
+                                        </Style></TextBlock.Style>
+                                    </TextBlock>
+                                    <TextBlock Text="{Binding Side}" Foreground="{StaticResource cream}" FontWeight="SemiBold" FontSize="12" VerticalAlignment="Center"/>
+                                </DockPanel>
                             </Border>
                             <TextBlock Text="연결된 기기" Foreground="#9A9EAD" FontSize="11.5" Margin="0,12,0,6"/>
-                            <ItemsControl ItemsSource="{Binding ConnectedPeers}">
+                            <ItemsControl ItemsSource="{Binding ConnectedPeerViews}">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
-                                        <Border Background="#161620" CornerRadius="8" Padding="11,9" Margin="0,0,0,5">
+                                        <!-- quiet row; hovering reveals rename + single-disconnect -->
+                                        <Border Background="#161620" CornerRadius="8" Padding="11,7" Margin="0,0,0,5" MinHeight="36">
                                             <DockPanel LastChildFill="False">
-                                                <TextBlock Text="{Binding}" Foreground="#EAECF6" FontWeight="SemiBold" FontSize="13" DockPanel.Dock="Left"/>
-                                                <TextBlock Text="● 연결됨" Foreground="#5FCF8A" FontSize="11" DockPanel.Dock="Right" VerticalAlignment="Center"/>
+                                                <StackPanel DockPanel.Dock="Left" Orientation="Horizontal">
+                                                    <TextBlock Text="{Binding Name}" Foreground="#EAECF6" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center"/>
+                                                    <TextBlock Text="{Binding Machine}" Foreground="#5B6070" FontSize="10.5" Margin="7,0,0,0" VerticalAlignment="Center"/>
+                                                </StackPanel>
+                                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                                    <StackPanel Orientation="Horizontal" Margin="0,0,10,0">
+                                                        <StackPanel.Style><Style TargetType="StackPanel">
+                                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=Border}}" Value="True">
+                                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style></StackPanel.Style>
+                                                        <Button Content="✎" Click="RenamePeer_Click" ToolTip="별명 지정"
+                                                                Padding="6,2" FontSize="10.5" Cursor="Hand"/>
+                                                        <Button Content="✕" Click="DisconnectPeer_Click" ToolTip="이 기기만 끊기"
+                                                                Padding="6,2" FontSize="10.5" Margin="4,0,0,0" Cursor="Hand" Foreground="#E06A6A"/>
+                                                    </StackPanel>
+                                                    <TextBlock Text="● 연결됨" Foreground="#5FCF8A" FontSize="11" VerticalAlignment="Center"/>
+                                                </StackPanel>
                                             </DockPanel>
                                         </Border>
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
-                            <TextBlock Text="커서를 화면 끝으로 밀어 넘어가세요 · 원격 조작 중 Ctrl 3번 = 즉시 복귀"
+                            <TextBlock Text="커서를 화면 끝으로 밀어 넘어가세요 · Ctrl+Alt+←→ = 기기 전환 · 원격 조작 중 Ctrl 3번 = 즉시 복귀"
                                        Foreground="#5B6070" FontSize="11" Margin="0,2,0,0" TextWrapping="Wrap"/>
                             <Button Content="모두 끊기" Command="{Binding StopCommand}" HorizontalAlignment="Left" Margin="0,10,0,0"/>
                         </StackPanel>
+                        </StackPanel>
 
-                        <!-- add receivers — always available; the hub can add more -->
-                        <StackPanel>
+                        <!-- add receivers — always available; the hub can add more.
+                             This part grows with history/discovery, so it scrolls. -->
+                        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                        <StackPanel Margin="0,0,6,0">
                             <!-- scanning hint until a receiver's beacon arrives -->
                             <TextBlock Foreground="#5B6070" FontSize="11.5" Margin="0,16,0,0" TextWrapping="Wrap"
-                                       Text="같은 네트워크의 수신 기기를 찾는 중…  (수신 기기에서 '대기 시작'을 눌러야 나타납니다)"
+                                       Text="같은 네트워크의 수신 기기를 찾는 중…  (상대 PC에서 Snapfield를 켜고 '수신 기기'를 선택하면 나타납니다)"
                                        Visibility="{Binding Scanning, Converter={StaticResource B2V}}"/>
-                            <!-- auto-discovered receivers on the LAN -->
-                            <TextBlock Text="같은 네트워크에서 발견됨" Foreground="#5FCF8A" FontSize="11.5" Margin="0,16,0,7"
-                                       Visibility="{Binding HasDiscovered, Converter={StaticResource B2V}}"/>
-                            <ItemsControl ItemsSource="{Binding Discovered}"
-                                          Visibility="{Binding HasDiscovered, Converter={StaticResource B2V}}">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <Button Style="{StaticResource RecentRow}"
-                                                Command="{Binding DataContext.PickDiscoveredCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
-                                                CommandParameter="{Binding}">
-                                            <DockPanel LastChildFill="False">
-                                                <StackPanel DockPanel.Dock="Left">
-                                                    <TextBlock Text="{Binding Name}" Foreground="#EAECF6" FontWeight="SemiBold" FontSize="13"/>
-                                                    <TextBlock Foreground="#7E8296" FontSize="11" Margin="0,3,0,0">
-                                                        <Run Text="{Binding Host, Mode=OneWay}"/><Run Text=":"/><Run Text="{Binding Port, Mode=OneWay}"/>
-                                                    </TextBlock>
-                                                </StackPanel>
-                                                <TextBlock DockPanel.Dock="Right" Text="● 온라인" Foreground="#5FCF8A" FontSize="11" VerticalAlignment="Center"/>
-                                            </DockPanel>
-                                        </Button>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
 
-                            <TextBlock Text="최근 연결" Foreground="#9A9EAD" FontSize="11.5" Margin="0,16,0,7"
-                                       Visibility="{Binding HasRecent, Converter={StaticResource B2V}}"/>
-                            <ItemsControl ItemsSource="{Binding RecentConnections}">
+                            <!-- ONE add-device list: discovery and history merged by host,
+                                 online rows first; connected machines are hidden -->
+                            <TextBlock Text="기기 추가" Foreground="#9A9EAD" FontSize="11.5" Margin="0,16,0,7"
+                                       Visibility="{Binding HasAddDevices, Converter={StaticResource B2V}}"/>
+                            <ItemsControl ItemsSource="{Binding AddDevices}">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
-                                        <Button Style="{StaticResource RecentRow}"
-                                                Command="{Binding DataContext.ConnectRecentCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                        <Button Command="{Binding DataContext.AddDeviceCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
                                                 CommandParameter="{Binding}">
+                                            <Button.Style><Style TargetType="Button" BasedOn="{StaticResource RecentRow}">
+                                                <Style.Triggers><DataTrigger Binding="{Binding Online}" Value="False">
+                                                    <Setter Property="Opacity" Value="0.72"/></DataTrigger></Style.Triggers>
+                                            </Style></Button.Style>
                                             <DockPanel LastChildFill="False">
                                                 <StackPanel DockPanel.Dock="Left">
                                                     <TextBlock Text="{Binding Name}" Foreground="#EAECF6" FontWeight="SemiBold" FontSize="13"/>
-                                                    <TextBlock Foreground="#7E8296" FontSize="11" Margin="0,3,0,0">
-                                                        <Run Text="{Binding Host, Mode=OneWay}"/><Run Text=":"/><Run Text="{Binding Port, Mode=OneWay}"/>
-                                                    </TextBlock>
+                                                    <TextBlock Text="{Binding HostPort}" Foreground="#7E8296" FontSize="11" Margin="0,3,0,0"/>
                                                 </StackPanel>
-                                                <TextBlock DockPanel.Dock="Right" Text="연결 ›" Foreground="#5B87EE" FontWeight="SemiBold" FontSize="12.5" VerticalAlignment="Center"/>
+                                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                                                    <TextBlock FontSize="11" VerticalAlignment="Center">
+                                                        <TextBlock.Style><Style TargetType="TextBlock">
+                                                            <Setter Property="Text" Value="오프라인"/>
+                                                            <Setter Property="Foreground" Value="#5B6070"/>
+                                                            <Style.Triggers><DataTrigger Binding="{Binding Online}" Value="True">
+                                                                <Setter Property="Text" Value="● 온라인"/>
+                                                                <Setter Property="Foreground" Value="#5FCF8A"/></DataTrigger></Style.Triggers>
+                                                        </Style></TextBlock.Style>
+                                                    </TextBlock>
+                                                    <TextBlock Text="{Binding ActionText}" Foreground="#5B87EE" FontWeight="SemiBold" FontSize="12.5"
+                                                               VerticalAlignment="Center" Margin="14,0,0,0"/>
+                                                </StackPanel>
                                             </DockPanel>
                                         </Button>
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
-                            <TextBlock Text="아직 연결한 기기가 없어요. 새 기기를 추가하세요." Foreground="#7E8296" FontSize="12"
-                                       Margin="0,18,0,14" TextAlignment="Center" Visibility="{Binding NoRecent, Converter={StaticResource B2V}}"/>
+                            <TextBlock Text="아직 추가할 기기가 없어요. 상대 PC에서 수신 기기를 켜거나, IP로 직접 연결하세요." Foreground="#7E8296" FontSize="12"
+                                       Margin="0,18,0,14" TextAlignment="Center" TextWrapping="Wrap" Visibility="{Binding NoAddDevices, Converter={StaticResource B2V}}"/>
                             <Button Content="＋ 새 기기 연결" Command="{Binding ShowNewFormCommand}" Style="{StaticResource PrimaryButton}"
                                     HorizontalAlignment="Left" Margin="0,10,0,0"/>
+                            <TextBlock Text="{Binding Status}" Foreground="#7E8296" TextWrapping="Wrap" FontSize="11" Margin="0,12,0,0"/>
                         </StackPanel>
-                        <TextBlock Text="{Binding Status}" Foreground="#7E8296" TextWrapping="Wrap" FontSize="11" Margin="0,12,0,0"/>
-                    </StackPanel>
+                        </ScrollViewer>
+                    </DockPanel>
 
                     <!-- receiver -->
                     <StackPanel Visibility="{Binding IsReceiverPage, Converter={StaticResource B2V}}">
@@ -496,6 +531,8 @@
                     <DockPanel LastChildFill="False">
                         <Button DockPanel.Dock="Left" Content="자동 정렬로 초기화" Command="{Binding AutoArrangeCommand}"
                                 Visibility="{Binding IsEditable, Converter={StaticResource B2V}}"/>
+                        <Button DockPanel.Dock="Left" Content="프리셋 ▾" Click="PresetMenu_Click" Margin="7,0,0,0"
+                                Visibility="{Binding IsEditable, Converter={StaticResource B2V}}"/>
                         <TextBlock DockPanel.Dock="Left" VerticalAlignment="Center" FontSize="11" Margin="12,0,0,0">
                             <Run Text="‹·›" FontFamily="Consolas" FontWeight="Bold" Foreground="#5FCF8A"/><Run Text=" 커서 통과 구간" Foreground="#5B6070"/>
                             <Run Text="   ✕" Foreground="#E06A6A"/><Run Text=" 상대 화면 밖 (가장자리로 보정됨)" Foreground="#5B6070"/>
@@ -533,7 +570,7 @@
                                     <Style.Triggers><DataTrigger Binding="{Binding IsRemote}" Value="True">
                                         <Setter Property="Foreground" Value="#F2D5A5"/></DataTrigger></Style.Triggers>
                                 </Style></Border.Resources>
-                                <TextBlock Text="{Binding MachineId}" FontSize="9.5"/>
+                                <TextBlock Text="{Binding MachineLabel}" FontSize="9.5"/>
                             </Border>
                             <Border Style="{StaticResource InspectorChip}">
                                 <TextBlock FontSize="9.5" Foreground="#9A9EAD">
@@ -651,7 +688,7 @@
                                         <Viewbox Margin="8,7" MaxHeight="104">
                                             <StackPanel>
                                                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,0,0,1">
-                                                    <TextBlock Text="{Binding MachineId}" Foreground="#9DB4E8" FontSize="8.5"/>
+                                                    <TextBlock Text="{Binding MachineLabel}" Foreground="#9DB4E8" FontSize="8.5"/>
                                                     <TextBlock Text=" · " Foreground="#565A6E" FontSize="8.5"/>
                                                     <TextBlock Text="{Binding KindLabel}" Foreground="#8A8FA4" FontSize="8.5"/>
                                                 </StackPanel>
@@ -742,7 +779,21 @@
                                 <Run Text="기기 이름: "/><Run Text="{Binding MachineName, Mode=OneWay}" Foreground="#EAECF6" FontWeight="SemiBold"/>
                             </TextBlock>
                             <TextBlock Text="연결 코드 (상대가 나를 조작할 때 입력)" Foreground="#9A9EAD" FontSize="11.5" Margin="0,10,0,2"/>
-                            <TextBlock Text="{Binding ReceiverPin, Mode=OneWay}" Foreground="#5FCF8A" FontSize="24" FontWeight="Bold" FontFamily="Consolas"/>
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="{Binding PinDisplay, Mode=OneWay}" Foreground="#5FCF8A" FontSize="24" FontWeight="Bold" FontFamily="Consolas" VerticalAlignment="Center"/>
+                                <Button Command="{Binding CopyPinCommand}" Content="복사" Padding="9,3" FontSize="11" Margin="12,0,0,0" VerticalAlignment="Center"/>
+                                <Button Command="{Binding TogglePinCommand}" Padding="9,3" FontSize="11" Margin="5,0,0,0" VerticalAlignment="Center">
+                                    <Button.Style><Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                        <Setter Property="Content" Value="가리기"/>
+                                        <Style.Triggers><DataTrigger Binding="{Binding PinHidden}" Value="True">
+                                            <Setter Property="Content" Value="보이기"/></DataTrigger></Style.Triggers>
+                                    </Style></Button.Style>
+                                </Button>
+                                <Button Command="{Binding RegeneratePinCommand}" Content="재발급…" Padding="9,3" FontSize="11" Margin="5,0,0,0" VerticalAlignment="Center"/>
+                            </StackPanel>
+                            <TextBlock Foreground="#5B6070" FontSize="10.5" Margin="0,7,0,0" TextWrapping="Wrap" MaxWidth="380"
+                                       Text="코드가 노출됐다면 재발급하세요 — 새 코드는 다음 연결부터 적용되고, 이미 연결된 기기는 끊기지 않습니다."/>
+                            <TextBlock Text="{Binding PinNote}" Foreground="#9DB4E8" FontSize="10.5" Margin="0,4,0,0"/>
                         </StackPanel>
                     </Border>
 

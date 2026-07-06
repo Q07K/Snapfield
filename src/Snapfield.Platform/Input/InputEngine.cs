@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using Snapfield.Core.Input;
 using Snapfield.Core.Model;
 using static Snapfield.Platform.Input.InputInterop;
@@ -33,6 +34,7 @@ public sealed class InputEngine : IDisposable
     private readonly CursorRouter _router;
     private readonly LowLevelMouseHook _hook;
     private readonly LowLevelKeyboardHook _kbHook;
+    private DesktopLayout _layout; // for the machine-switch cycle order
 
     // The router and capture state are touched by three threads: the mouse-hook
     // thread (moves), the keyboard-hook thread (panic release), and network
@@ -72,6 +74,7 @@ public sealed class InputEngine : IDisposable
     public InputEngine(string localMachineId, DesktopLayout layout)
     {
         _localMachineId = localMachineId;
+        _layout = layout;
         _router = new CursorRouter(localMachineId, layout);
         _hook = new LowLevelMouseHook(OnMouseEvent);
         _kbHook = new LowLevelKeyboardHook(OnKeyEvent);
@@ -86,6 +89,7 @@ public sealed class InputEngine : IDisposable
     {
         lock (_sync)
         {
+            _layout = layout;
             _router.UpdateLayout(layout);
             RecomputeFromLayout(layout);
         }
@@ -135,7 +139,17 @@ public sealed class InputEngine : IDisposable
 
     private bool OnKeyEvent(KeyHookEvent e)
     {
-        if (e.InjectedByUs || !_captured) return false;
+        if (e.InjectedByUs) return false;
+
+        // Machine switch: Ctrl+Alt+←/→ warps the cursor to the previous/next
+        // machine on the plane — works from local AND while captured.
+        if (!e.Up && e.Vk is 0x25 or 0x27 && CtrlAltHeld())
+        {
+            JumpBy(e.Vk == 0x27 ? +1 : -1);
+            return true; // swallow — don't let the arrow reach apps
+        }
+
+        if (!_captured) return false;
 
         // Panic release: tap Ctrl 3× quickly to yank control back to this PC,
         // e.g. if the remote hangs. Any other key resets the count.
@@ -143,6 +157,68 @@ public sealed class InputEngine : IDisposable
 
         RemoteKey?.Invoke(e.Vk, e.Scan, !e.Up, e.Extended);
         return true;
+    }
+
+    [DllImport("user32.dll")]
+    private static extern short GetAsyncKeyState(int vk);
+    private static bool CtrlAltHeld() => GetAsyncKeyState(0x11) < 0 && GetAsyncKeyState(0x12) < 0;
+
+    /// <summary>Cycles the cursor to the previous/next machine, ordered left→right
+    /// by each machine's leftmost monitor on the physical plane.</summary>
+    private void JumpBy(int dir)
+    {
+        string? target;
+        lock (_sync)
+        {
+            var machines = _layout.Monitors
+                .GroupBy(m => m.MachineId)
+                .OrderBy(g => g.Min(m => m.PhysicalBounds.XMm))
+                .Select(g => g.Key)
+                .ToList();
+            if (machines.Count < 2) return;
+            var current = _router.Active?.MachineId ?? _localMachineId;
+            var idx = machines.IndexOf(current);
+            target = machines[((idx < 0 ? 0 : idx) + dir + machines.Count) % machines.Count];
+        }
+        JumpToMachine(target);
+    }
+
+    /// <summary>Warps the cursor to the centre of a machine's largest monitor —
+    /// the fast path across a wide plane, no seam-pushing required.</summary>
+    public void JumpToMachine(string machineId)
+    {
+        lock (_sync)
+        {
+            var res = _router.JumpToMachine(machineId);
+            if (res.Owner is null) return;
+            var (px, py) = res.PixelInt;
+
+            if (res.Owner.MachineId == _localMachineId)
+            {
+                // Land on a local monitor: release capture (if any) and warp there.
+                if (_captured)
+                {
+                    _captured = false;
+                    CursorHider.Show();
+                    ControlReturnedLocal?.Invoke();
+                }
+                CursorInjector.WarpTo(px, py);
+            }
+            else
+            {
+                // Land on a remote monitor: park + capture, like a seam crossing.
+                if (!_captured)
+                {
+                    _captured = true;
+                    if (HideCursorWhileCaptured) CursorHider.Hide();
+                    var m = _metrics;
+                    CursorInjector.WarpTo(m.CenterX, m.CenterY);
+                }
+                ControlEnteredRemote?.Invoke(res.Owner.MachineId); // retargets routing + Enter msg
+                RemoteCursor?.Invoke(res.Owner.MachineId, px, py);
+            }
+            RaiseStatus(force: true);
+        }
     }
 
     private bool IsPanicTap(KeyHookEvent e)
@@ -158,8 +234,9 @@ public sealed class InputEngine : IDisposable
         return true;
     }
 
-    /// <summary>Immediately returns control to this PC (panic hotkey / safety).</summary>
-    private void ForceReleaseToLocal()
+    /// <summary>Immediately returns control to this PC (panic hotkey / peer-drop
+    /// safety — without it a dead peer strands the cursor invisible).</summary>
+    public void ForceReleaseToLocal()
     {
         if (!_captured) return;
         int cx, cy;

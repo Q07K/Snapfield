@@ -136,6 +136,35 @@ public sealed class CursorRouter
     }
 
     /// <summary>
+    /// Warps the virtual cursor to the centre of a machine's largest monitor
+    /// (the machine-switch hotkey). Returns the landing monitor and pixel, with
+    /// a ToRemote/ToLocal transition when the local/remote side changed.
+    /// </summary>
+    public RouteResult JumpToMachine(string machineId)
+    {
+        MonitorInfo? target = null;
+        double best = -1;
+        foreach (var m in _layout.MonitorsOf(machineId))
+        {
+            var area = m.PhysicalBounds.WidthMm * m.PhysicalBounds.HeightMm;
+            if (area > best) { best = area; target = m; }
+        }
+        if (target is null) return new RouteResult(RouteTransition.None, Active, 0, 0);
+
+        var wasLocal = IsLocalActive;
+        Virtual = target.PhysicalBounds.Center;
+        Active = target;
+        var (px, py) = _mapper.PhysicalToPixel(target, Virtual);
+        var transition = (wasLocal, IsLocalActive) switch
+        {
+            (true, false) => RouteTransition.ToRemote,
+            (false, true) => RouteTransition.ToLocal,
+            _ => RouteTransition.None,
+        };
+        return new RouteResult(transition, target, px, py);
+    }
+
+    /// <summary>
     /// Feed a movement delta (mm) while control is remote/captured. Moves the virtual
     /// cursor and reports whether it has returned to a local monitor.
     /// </summary>

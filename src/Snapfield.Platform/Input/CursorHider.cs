@@ -59,6 +59,21 @@ public static class CursorHider
         }
     }
 
+    /// <summary>
+    /// Restores the cursor scheme unconditionally — ignores the in-process flag.
+    /// The transparent cursors are a SYSTEM-wide change that survives our process,
+    /// so a crash/kill while captured strands the user with an invisible cursor;
+    /// call this on startup (and from crash handlers) to heal that.
+    /// </summary>
+    public static void ForceRestore()
+    {
+        lock (Gate)
+        {
+            SystemParametersInfo(SPI_SETCURSORS, 0, IntPtr.Zero, 0);
+            _hidden = false;
+        }
+    }
+
     private static IntPtr CreateBlankCursor()
     {
         const int w = 32, h = 32;

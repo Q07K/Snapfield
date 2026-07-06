@@ -35,6 +35,11 @@ public sealed class MonitorViewModel : ObservableObject
     public string DeviceId { get; }
     public string DisplayName { get; }
 
+    /// <summary>What the canvas prints for the owning machine — its nickname when
+    /// one is set, else the machine id.</summary>
+    public string MachineLabel => _owner.ResolveMachineName(MachineId);
+    public void RaiseMachineLabelChanged() => OnPropertyChanged(nameof(MachineLabel));
+
     /// <summary>True when this monitor belongs to another machine on the plane.</summary>
     public bool IsRemote => MachineId != Environment.MachineName;
 
@@ -94,6 +99,18 @@ public sealed class MonitorViewModel : ObservableObject
     {
         WidthMm = widthMm;
         HeightMm = heightMm;
+        OnPropertyChanged(nameof(PhysicalText));
+        OnPropertyChanged(nameof(DiagonalText));
+        RefreshCanvas();
+    }
+
+    /// <summary>Applies a saved placement exactly (preset apply) — no edge snapping.</summary>
+    public void ApplyPlacement(double xMm, double yMm, double widthMm, double heightMm)
+    {
+        WidthMm = widthMm;
+        HeightMm = heightMm;
+        XMm = xMm;
+        YMm = yMm;
         OnPropertyChanged(nameof(PhysicalText));
         OnPropertyChanged(nameof(DiagonalText));
         RefreshCanvas();

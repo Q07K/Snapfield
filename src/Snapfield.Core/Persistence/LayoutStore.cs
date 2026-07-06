@@ -21,6 +21,8 @@ public sealed record MonitorState
     public double PhysicalHeightMm { get; init; }
     public double DpiScale { get; init; } = 1.0;
     public bool IsInternal { get; init; }
+    /// <summary>DeviceKind as int (0 = unspecified → derive from IsInternal).</summary>
+    public int Kind { get; init; }
 
     public string Key => $"{MachineId}/{DeviceId}";
 
@@ -39,6 +41,7 @@ public sealed record MonitorState
         PhysicalHeightMm = m.PhysicalBounds.HeightMm,
         DpiScale = m.DpiScale,
         IsInternal = m.IsInternal,
+        Kind = (int)m.Kind,
     };
 
     public MonitorInfo ToMonitorInfo() => new()
@@ -50,6 +53,7 @@ public sealed record MonitorState
         PhysicalBounds = new PhysicalRect(PhysicalXMm, PhysicalYMm, PhysicalWidthMm, PhysicalHeightMm),
         DpiScale = DpiScale,
         IsInternal = IsInternal,
+        Kind = (DeviceKind)Kind,
     };
 }
 

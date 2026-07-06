@@ -24,7 +24,7 @@ public sealed class MonitorViewModel : ObservableObject
         PixelLeft = m.PixelBounds.Left;
         PixelTop = m.PixelBounds.Top;
         DpiScale = m.DpiScale;
-        _isLaptop = m.IsInternal;
+        _kind = m.EffectiveKind;
         _xMm = m.PhysicalBounds.XMm;
         _yMm = m.PhysicalBounds.YMm;
         WidthMm = m.PhysicalBounds.WidthMm;
@@ -43,17 +43,47 @@ public sealed class MonitorViewModel : ObservableObject
     /// <summary>True when this monitor belongs to another machine on the plane.</summary>
     public bool IsRemote => MachineId != Environment.MachineName;
 
-    /// <summary>Built-in laptop panel vs standalone monitor — drives the silhouette.
-    /// Auto-detected, but the user can override it (EDID/QueryDisplayConfig can be
-    /// wrong, or a remote came from an older build without the flag).</summary>
-    private bool _isLaptop;
-    public bool IsLaptop
+    /// <summary>Device kind — drives the silhouette (monitor stand / laptop deck /
+    /// phone-tablet slab). Auto-detected (Windows: INTERNAL panel = laptop; Android
+    /// reports phone/tablet), but the user can cycle it when detection is wrong.</summary>
+    private DeviceKind _kind;
+    public DeviceKind Kind
     {
-        get => _isLaptop;
-        set { if (SetField(ref _isLaptop, value)) { OnPropertyChanged(nameof(IsMonitor)); OnPropertyChanged(nameof(KindLabel)); } }
+        get => _kind;
+        set
+        {
+            if (!SetField(ref _kind, value)) return;
+            OnPropertyChanged(nameof(IsMonitor));
+            OnPropertyChanged(nameof(IsLaptop));
+            OnPropertyChanged(nameof(IsHandheld));
+            OnPropertyChanged(nameof(KindLabel));
+        }
     }
-    public bool IsMonitor => !IsLaptop;
-    public string KindLabel => IsLaptop ? "노트북" : "모니터";
+
+    public bool IsMonitor => _kind == DeviceKind.Monitor;
+    public bool IsLaptop => _kind == DeviceKind.Laptop;
+    /// <summary>Phone or tablet: a bare slab — no stand, no keyboard deck.</summary>
+    public bool IsHandheld => _kind is DeviceKind.Phone or DeviceKind.Tablet;
+
+    public string KindLabel => _kind switch
+    {
+        DeviceKind.Laptop => "노트북",
+        DeviceKind.Phone => "스마트폰",
+        DeviceKind.Tablet => "태블릿",
+        _ => "모니터",
+    };
+
+    /// <summary>Manual correction: cycle 모니터 → 노트북 → 스마트폰 → 태블릿.</summary>
+    public void CycleKind()
+    {
+        Kind = _kind switch
+        {
+            DeviceKind.Monitor => DeviceKind.Laptop,
+            DeviceKind.Laptop => DeviceKind.Phone,
+            DeviceKind.Phone => DeviceKind.Tablet,
+            _ => DeviceKind.Monitor,
+        };
+    }
     public int PixelWidth { get; }
     public int PixelHeight { get; }
     public int PixelLeft { get; }
@@ -142,6 +172,7 @@ public sealed class MonitorViewModel : ObservableObject
         PixelBounds = new PixelRect(PixelLeft, PixelTop, PixelWidth, PixelHeight),
         PhysicalBounds = new PhysicalRect(XMm, YMm, WidthMm, HeightMm),
         DpiScale = DpiScale,
-        IsInternal = IsLaptop,
+        IsInternal = IsLaptop, // kept for older peers reading the plane
+        Kind = _kind,
     };
 }

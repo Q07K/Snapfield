@@ -153,6 +153,8 @@ class ReceiverService : Service() {
             physicalHeightMm = heightMm,
             dpiScale = dm.density.toDouble(),
             isInternal = true,
+            // sw600dp is the standard phone/tablet boundary (DeviceKind: 3=phone, 4=tablet)
+            kind = if (resources.configuration.smallestScreenWidthDp >= 600) 4 else 3,
         )
     }
 

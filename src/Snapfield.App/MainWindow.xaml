@@ -606,8 +606,8 @@
                         <Button Content="📐 실제 크기 보정 (인치)…" Style="{StaticResource InspectorButton}" Margin="0,13,0,0"
                                 Click="ResizeMonitor_Click"
                                 IsEnabled="{Binding DataContext.IsEditable, ElementName=CalibrationRoot}"/>
-                        <Button Content="💻 노트북 ↔ 모니터 전환" Style="{StaticResource InspectorButton}"
-                                Click="ToggleKind_Click"
+                        <Button Content="💻 기기 종류 전환" Style="{StaticResource InspectorButton}"
+                                Click="ToggleKind_Click" ToolTip="모니터 → 노트북 → 스마트폰 → 태블릿 순환"
                                 IsEnabled="{Binding DataContext.IsEditable, ElementName=CalibrationRoot}"/>
                         <Button Content="🗑 평면에서 제거" Click="RemoveMonitor_Click" ToolTipService.ShowOnDisabled="True">
                             <Button.Style><Style TargetType="Button" BasedOn="{StaticResource InspectorButton}">
@@ -647,15 +647,15 @@
                                   MouseLeftButtonDown="Monitor_MouseLeftButtonDown" MouseMove="Monitor_MouseMove" MouseLeftButtonUp="Monitor_MouseLeftButtonUp">
                                 <Grid.ContextMenu>
                                     <ContextMenu>
-                                        <MenuItem Header="노트북 ↔ 모니터 전환" Click="ToggleKind_Click"/>
+                                        <MenuItem Header="기기 종류 전환 (모니터·노트북·폰·태블릿)" Click="ToggleKind_Click"/>
                                         <MenuItem Header="실제 크기 보정 (인치)…" Click="ResizeMonitor_Click"/>
                                         <MenuItem Header="평면에서 제거 (원격 모니터만)" Click="RemoveMonitor_Click"/>
                                     </ContextMenu>
                                 </Grid.ContextMenu>
                                 <StackPanel HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,-16" Panel.ZIndex="0">
                                     <StackPanel.Style><Style TargetType="StackPanel">
-                                        <Setter Property="Visibility" Value="Visible"/>
-                                        <Style.Triggers><DataTrigger Binding="{Binding IsLaptop}" Value="True"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger></Style.Triggers>
+                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                        <Style.Triggers><DataTrigger Binding="{Binding IsMonitor}" Value="True"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers>
                                     </Style></StackPanel.Style>
                                     <Rectangle Width="9" Height="10" Fill="{StaticResource standWarm}"/>
                                     <Rectangle Width="48" Height="6" RadiusX="3" RadiusY="3" Fill="{StaticResource standWarm}"/>
@@ -684,21 +684,27 @@
                                             <DataTrigger Binding="{Binding IsSelected}" Value="True"><Setter Property="BorderBrush" Value="{StaticResource selection}"/></DataTrigger>
                                         </Style.Triggers>
                                     </Style></Border.Style>
-                                    <Border CornerRadius="4" Background="{StaticResource screen}">
-                                        <Viewbox Margin="8,7" MaxHeight="104">
-                                            <StackPanel>
-                                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,0,0,1">
-                                                    <TextBlock Text="{Binding MachineLabel}" Foreground="#9DB4E8" FontSize="8.5"/>
-                                                    <TextBlock Text=" · " Foreground="#565A6E" FontSize="8.5"/>
-                                                    <TextBlock Text="{Binding KindLabel}" Foreground="#8A8FA4" FontSize="8.5"/>
+                                    <Grid>
+                                        <Border CornerRadius="4" Background="{StaticResource screen}">
+                                            <Viewbox Margin="8,7" MaxHeight="104">
+                                                <StackPanel>
+                                                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,0,0,1">
+                                                        <TextBlock Text="{Binding MachineLabel}" Foreground="#9DB4E8" FontSize="8.5"/>
+                                                        <TextBlock Text=" · " Foreground="#565A6E" FontSize="8.5"/>
+                                                        <TextBlock Text="{Binding KindLabel}" Foreground="#8A8FA4" FontSize="8.5"/>
+                                                    </StackPanel>
+                                                    <TextBlock Text="{Binding DisplayName}" Foreground="{StaticResource cream}" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+                                                    <TextBlock Text="{Binding ResolutionText}" Foreground="{StaticResource creamDim}" HorizontalAlignment="Center"/>
+                                                    <TextBlock Text="{Binding PhysicalText}" Foreground="{StaticResource creamFaint}" HorizontalAlignment="Center"/>
+                                                    <TextBlock Text="{Binding DiagonalText}" Foreground="#6E7286" HorizontalAlignment="Center"/>
                                                 </StackPanel>
-                                                <TextBlock Text="{Binding DisplayName}" Foreground="{StaticResource cream}" FontWeight="SemiBold" HorizontalAlignment="Center"/>
-                                                <TextBlock Text="{Binding ResolutionText}" Foreground="{StaticResource creamDim}" HorizontalAlignment="Center"/>
-                                                <TextBlock Text="{Binding PhysicalText}" Foreground="{StaticResource creamFaint}" HorizontalAlignment="Center"/>
-                                                <TextBlock Text="{Binding DiagonalText}" Foreground="#6E7286" HorizontalAlignment="Center"/>
-                                            </StackPanel>
-                                        </Viewbox>
-                                    </Border>
+                                            </Viewbox>
+                                        </Border>
+                                        <!-- handheld (phone/tablet): punch-hole camera instead of stand/deck -->
+                                        <Ellipse Width="5" Height="5" Fill="#4A4F66" HorizontalAlignment="Center"
+                                                 VerticalAlignment="Top" Margin="0,5,0,0"
+                                                 Visibility="{Binding IsHandheld, Converter={StaticResource B2V}}"/>
+                                    </Grid>
                                 </Border>
                             </Grid>
                         </DataTemplate>

@@ -39,6 +39,8 @@ data class MonitorState(
     val physicalHeightMm: Double,
     val dpiScale: Double,
     val isInternal: Boolean,
+    /** DeviceKind on the desktop: 0 unspecified, 1 monitor, 2 laptop, 3 phone, 4 tablet. */
+    val kind: Int = 0,
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         put("MachineId", machineId)
@@ -54,6 +56,7 @@ data class MonitorState(
         put("PhysicalHeightMm", physicalHeightMm)
         put("DpiScale", dpiScale)
         if (isInternal) put("IsInternal", true)
+        if (kind != 0) put("Kind", kind)
     }
 }
 

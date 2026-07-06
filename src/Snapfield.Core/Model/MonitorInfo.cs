@@ -2,6 +2,18 @@ using Snapfield.Core.Geometry;
 
 namespace Snapfield.Core.Model;
 
+/// <summary>What kind of device a display belongs to — drives the silhouette on
+/// the calibration canvas. Unspecified means "derive from IsInternal" so layouts
+/// and peers from before this field keep rendering correctly.</summary>
+public enum DeviceKind
+{
+    Unspecified = 0,
+    Monitor = 1,
+    Laptop = 2,
+    Phone = 3,
+    Tablet = 4,
+}
+
 /// <summary>
 /// A single physical monitor attached to some machine, placed on the shared
 /// global physical plane.
@@ -48,6 +60,14 @@ public sealed record MonitorInfo
     /// travels with the monitor in the network handshake.
     /// </summary>
     public bool IsInternal { get; init; }
+
+    /// <summary>Device kind when the sender knows it (phones/tablets report it);
+    /// Unspecified falls back to <see cref="IsInternal"/> for older peers/layouts.</summary>
+    public DeviceKind Kind { get; init; } = DeviceKind.Unspecified;
+
+    /// <summary>The kind to render: explicit when given, else derived from IsInternal.</summary>
+    public DeviceKind EffectiveKind =>
+        Kind != DeviceKind.Unspecified ? Kind : (IsInternal ? DeviceKind.Laptop : DeviceKind.Monitor);
 
     /// <summary>Globally-unique key: machine + device.</summary>
     public string Key => $"{MachineId}/{DeviceId}";

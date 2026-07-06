@@ -456,12 +456,12 @@ public sealed class CalibrationViewModel : ObservableObject
         StatusText = $"'{m.DisplayName}' 크기를 {diagonalInches:0.#}인치({w:0}×{h:0}mm)로 보정했습니다.";
     }
 
-    /// <summary>Flips a display between laptop and monitor when auto-detection got
-    /// it wrong (or a remote arrived from a build without the flag).</summary>
+    /// <summary>Cycles a display's device kind (모니터→노트북→폰→태블릿) when
+    /// auto-detection got it wrong (or a remote came from an older build).</summary>
     public void ToggleKind(MonitorViewModel m)
     {
         if (!_isEditable) { StatusText = "배치는 조작 기기에서만 변경할 수 있습니다."; return; }
-        m.IsLaptop = !m.IsLaptop;
+        m.CycleKind();
         Save();
         StatusText = $"'{m.DisplayName}'을(를) {m.KindLabel}(으)로 변경했습니다.";
     }

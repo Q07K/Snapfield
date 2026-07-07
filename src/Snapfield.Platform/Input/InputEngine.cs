@@ -140,6 +140,7 @@ public sealed class InputEngine : IDisposable
                 _router.SeatLocal(x, y);
                 _captured = false;
             }
+            _ctrlHeld = _altHeld = false; // stale from a previous hook's lifetime
             _hook.Start();
             _kbHook.Start();
             _lastMouseCbTick = Environment.TickCount;
@@ -210,6 +211,18 @@ public sealed class InputEngine : IDisposable
     {
         if (e.InjectedByUs) return false;
 
+        // Track the PHYSICAL modifier state from the hook events themselves.
+        // While captured, Ctrl/Alt are swallowed (forwarded to the remote), so
+        // they never reach the OS key-state table — GetAsyncKeyState reports
+        // them up and the machine-switch hotkey went dead exactly when the
+        // cursor was on a remote machine. The hook observes every physical key
+        // even when it swallows it, so this state works in both worlds.
+        switch (e.Vk)
+        {
+            case 0x11 or 0xA2 or 0xA3: _ctrlHeld = !e.Up; break;
+            case 0x12 or 0xA4 or 0xA5: _altHeld = !e.Up; break;
+        }
+
         // Machine switch: Ctrl+Alt+←/→ opens the switcher strip and moves its
         // selection — works from local AND while captured. The jump itself
         // happens when a modifier is released (below), like Alt+Tab.
@@ -241,7 +254,14 @@ public sealed class InputEngine : IDisposable
 
     [DllImport("user32.dll")]
     private static extern short GetAsyncKeyState(int vk);
-    private static bool CtrlAltHeld() => GetAsyncKeyState(0x11) < 0 && GetAsyncKeyState(0x12) < 0;
+
+    private volatile bool _ctrlHeld, _altHeld;
+
+    // Hook-tracked state covers the captured case (swallowed keys never reach
+    // GetAsyncKeyState); the async fallback covers keys already held before the
+    // hook started (e.g. right after engine start / a watchdog reinstall).
+    private bool CtrlAltHeld() =>
+        (_ctrlHeld || GetAsyncKeyState(0x11) < 0) && (_altHeld || GetAsyncKeyState(0x12) < 0);
 
     // Switcher session — touched only on the keyboard-hook thread.
     private List<string>? _swMachines;

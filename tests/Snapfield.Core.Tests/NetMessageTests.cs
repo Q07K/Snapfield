@@ -107,6 +107,33 @@ public class NetMessageTests
         Assert.Equal(200, m.Y);
     }
 
+    [Fact]
+    public void SwitchFeedbackMessages_RoundTripJson()
+    {
+        var ping = NetMessage.FromBody(NetMessage.Ping(640, 512).ToJson());
+        Assert.Equal(MsgType.CursorPing, ping!.Type);
+        Assert.Equal(640, ping.X);
+        Assert.Equal(512, ping.Y);
+
+        var show = NetMessage.FromBody(NetMessage.SwitcherShowMsg("PC-1\nPC-2\n노트북", 2).ToJson());
+        Assert.Equal(MsgType.SwitcherShow, show!.Type);
+        Assert.Equal(new[] { "PC-1", "PC-2", "노트북" }, show.Text!.Split('\n'));
+        Assert.Equal(2, show.X);
+
+        Assert.Equal(MsgType.SwitcherHide, NetMessage.FromBody(NetMessage.SwitcherHideMsg().ToJson())!.Type);
+    }
+
+    [Fact]
+    public void MsgTypeValues_AreWireStable()
+    {
+        // MsgType goes over the wire as its number — reordering the enum breaks
+        // every mixed-version pair. New members append only.
+        Assert.Equal(11, (int)MsgType.ClipboardFiles);
+        Assert.Equal(12, (int)MsgType.CursorPing);
+        Assert.Equal(13, (int)MsgType.SwitcherShow);
+        Assert.Equal(14, (int)MsgType.SwitcherHide);
+    }
+
     [Theory]
     [InlineData(new byte[0])]
     [InlineData(new byte[] { 0x01, 0x00 })]       // truncated cursor frame

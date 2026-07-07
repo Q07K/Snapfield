@@ -62,6 +62,12 @@ public sealed class NetworkSession : IDisposable
     public event Action<string, int, string>? PeerIdentified;          // (host, port, machineId) post-Hello — controller
     public event Action<string>? AuthFailed;                           // wrong pin, conn dropped — controller
 
+    // Machine-switch UX, raised on whichever machine must draw it: the landing
+    // pulse at local pixels, and the switcher strip (machine ids + selection).
+    public event Action<int, int>? CursorPing;
+    public event Action<string[], int>? SwitcherChanged;
+    public event Action? SwitcherClosed;
+
     public NetworkSession(string localMachineId, IReadOnlyList<MonitorInfo> localMonitors)
     {
         _localMachineId = localMachineId;
@@ -168,6 +174,16 @@ public sealed class NetworkSession : IDisposable
                 if (Role == PeerRole.Receiver && msg.Monitors is { Length: > 0 } plane)
                     LayoutStore.Save(LayoutStore.DefaultPath, new DesktopLayout(plane.Select(s => s.ToMonitorInfo())));
                 break;
+            case MsgType.CursorPing:
+                if (Role == PeerRole.Receiver) CursorPing?.Invoke(msg.X, msg.Y);
+                break;
+            case MsgType.SwitcherShow:
+                if (Role == PeerRole.Receiver && msg.Text is { Length: > 0 } ids)
+                    SwitcherChanged?.Invoke(ids.Split('\n'), msg.X);
+                break;
+            case MsgType.SwitcherHide:
+                if (Role == PeerRole.Receiver) SwitcherClosed?.Invoke();
+                break;
         }
     }
 
@@ -266,6 +282,24 @@ public sealed class NetworkSession : IDisposable
                 _engine.RemoteKey += (vk, sc, down, ext) => LinkFor(_activeRemote)?.Send(NetMessage.KeyEvent(vk, sc, down, ext));
                 _engine.ControlEnteredRemote += mid => { _activeRemote = mid; LinkFor(mid)?.Send(NetMessage.Enter()); };
                 _engine.ControlReturnedLocal += () => { LinkFor(_activeRemote)?.Send(NetMessage.Leave()); _activeRemote = null; };
+                _engine.JumpLanded += (mid, x, y) =>
+                {
+                    if (mid is null) CursorPing?.Invoke(x, y);
+                    else LinkFor(mid)?.Send(NetMessage.Ping(x, y));
+                };
+                // The strip shows locally AND on the machine the user is looking
+                // at (the active remote while captured). Engine raises Closed
+                // BEFORE retargeting a jump, so _activeRemote is still the old one.
+                _engine.SwitcherChanged += (ids, sel) =>
+                {
+                    SwitcherChanged?.Invoke(ids, sel);
+                    LinkFor(_activeRemote)?.Send(NetMessage.SwitcherShowMsg(string.Join('\n', ids), sel));
+                };
+                _engine.SwitcherClosed += () =>
+                {
+                    SwitcherClosed?.Invoke();
+                    LinkFor(_activeRemote)?.Send(NetMessage.SwitcherHideMsg());
+                };
                 _engine.StatusChanged += s => EngineStatus?.Invoke(s);
                 _engine.Fault += m => Status?.Invoke(m);
                 _engine.Start();

@@ -490,6 +490,9 @@ public sealed class NetworkViewModel : ObservableObject
         _session.PeersChanged += OnPeersChanged;
         _session.PeerIdentified += OnPeerIdentified;
         _session.AuthFailed += OnAuthFailed;
+        _session.CursorPing += OnCursorPing;
+        _session.SwitcherChanged += OnSwitcherChanged;
+        _session.SwitcherClosed += OnSwitcherClosed;
         if (monitors.Count == 0)
             Status = "경고: 이 PC의 모니터를 하나도 인식하지 못했습니다!";
     }
@@ -498,6 +501,7 @@ public sealed class NetworkViewModel : ObservableObject
     {
         _session?.Dispose();
         _session = null;
+        _switcher?.HideStrip();
         IsActive = false;
         IsBeingControlled = false;
         _remoteActive = false;
@@ -587,6 +591,22 @@ public sealed class NetworkViewModel : ObservableObject
                 ? new SolidColorBrush(Color.FromRgb(0xE0, 0x8A, 0x2A))
                 : new SolidColorBrush(Color.FromRgb(0x3B, 0x77, 0xE8));
         });
+
+    // ── Machine-switch overlays (landing pulse + switcher strip) ─────────────
+    // Lazily created, reused for the app's lifetime; hidden windows are cheap
+    // and the tray app only exits via an explicit Shutdown().
+    private PingOverlayWindow? _ping;
+    private SwitcherOverlayWindow? _switcher;
+
+    private void OnCursorPing(int x, int y) =>
+        Application.Current?.Dispatcher.BeginInvoke(() => (_ping ??= new PingOverlayWindow()).PlayAt(x, y));
+
+    private void OnSwitcherChanged(string[] machineIds, int selected) =>
+        Application.Current?.Dispatcher.BeginInvoke(() =>
+            (_switcher ??= new SwitcherOverlayWindow()).ShowSelection(machineIds.Select(Nick).ToArray(), selected));
+
+    private void OnSwitcherClosed() =>
+        Application.Current?.Dispatcher.BeginInvoke(() => _switcher?.HideStrip());
 
     private void OnReceiverActivity(long count, int x, int y) =>
         Application.Current?.Dispatcher.BeginInvoke(() =>

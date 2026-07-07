@@ -19,6 +19,9 @@ public enum MsgType
     ClipboardImage, // Text carries base64 PNG — clipboard image changed on the sender
     Layout,         // Monitors — the controller's combined global plane, for the receiver to display
     ClipboardFiles, // Files — copied files (name + base64 bytes) shared via the clipboard
+    CursorPing,     // X, Y — play a landing pulse there (machine-switch jump feedback)
+    SwitcherShow,   // Text = '\n'-joined machine ids, X = selected index — show/update the switcher strip
+    SwitcherHide,   // hide the switcher strip
 }
 
 /// <summary>One file shared over the clipboard (name + base64-encoded content).</summary>
@@ -67,6 +70,11 @@ public sealed record NetMessage
         new() { Type = MsgType.Key, Vk = vk, Scan = scan, Down = down, Extended = extended };
     public static NetMessage Enter() => new() { Type = MsgType.ControlEnter };
     public static NetMessage Leave() => new() { Type = MsgType.ControlLeave };
+
+    public static NetMessage Ping(int x, int y) => new() { Type = MsgType.CursorPing, X = x, Y = y };
+    public static NetMessage SwitcherShowMsg(string machines, int selected) =>
+        new() { Type = MsgType.SwitcherShow, Text = machines, X = selected };
+    public static NetMessage SwitcherHideMsg() => new() { Type = MsgType.SwitcherHide };
 
     // ── binary fast-path ─────────────────────────────────────────────────────
     // Messages that flow at input rate (cursor at mouse-polling frequency, plus

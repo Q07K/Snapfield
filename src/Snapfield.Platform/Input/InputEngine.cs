@@ -85,6 +85,15 @@ public sealed class InputEngine : IDisposable
     public event Action<string>? ControlEnteredRemote;     // (remoteMachineId)
     public event Action? ControlReturnedLocal;
 
+    // Machine-switcher UX (Ctrl+Alt+←/→): arrows move the selection while the
+    // modifiers stay held, releasing Ctrl or Alt commits the jump (Alt+Tab
+    // style), Esc cancels. The UI shows a strip driven by these events.
+    public event Action<string[], int>? SwitcherChanged;   // (machine ids left→right, selected index)
+    public event Action? SwitcherClosed;
+    /// <summary>A machine-switch jump landed: machineId is null for a local
+    /// landing, else the remote machine; (x, y) are that machine's pixels.</summary>
+    public event Action<string?, int, int>? JumpLanded;
+
     public InputEngine(string localMachineId, DesktopLayout layout)
     {
         _localMachineId = localMachineId;
@@ -153,6 +162,9 @@ public sealed class InputEngine : IDisposable
             CursorHider.Show(); // never leave the system cursor hidden
             IsRunning = false;
         }
+        // The hook that would commit/cancel the switcher is gone — close the strip.
+        _swMachines = null;
+        SwitcherClosed?.Invoke();
         RaiseStatus(force: true);
     }
 
@@ -198,12 +210,23 @@ public sealed class InputEngine : IDisposable
     {
         if (e.InjectedByUs) return false;
 
-        // Machine switch: Ctrl+Alt+←/→ warps the cursor to the previous/next
-        // machine on the plane — works from local AND while captured.
+        // Machine switch: Ctrl+Alt+←/→ opens the switcher strip and moves its
+        // selection — works from local AND while captured. The jump itself
+        // happens when a modifier is released (below), like Alt+Tab.
         if (!e.Up && e.Vk is 0x25 or 0x27 && CtrlAltHeld())
         {
-            JumpBy(e.Vk == 0x27 ? +1 : -1);
+            SwitcherAdvance(e.Vk == 0x27 ? +1 : -1);
             return true; // swallow — don't let the arrow reach apps
+        }
+
+        if (_swMachines is not null)
+        {
+            if (!e.Up && e.Vk == 0x1B) { CancelSwitcher(); return true; } // Esc cancels
+            if (e.Up && e.Vk is 0x11 or 0xA2 or 0xA3 or 0x12 or 0xA4 or 0xA5)
+            {
+                CommitSwitcher();
+                return _captured; // swallow like other keys while captured; pass through locally
+            }
         }
 
         if (!_captured) return false;
@@ -220,29 +243,74 @@ public sealed class InputEngine : IDisposable
     private static extern short GetAsyncKeyState(int vk);
     private static bool CtrlAltHeld() => GetAsyncKeyState(0x11) < 0 && GetAsyncKeyState(0x12) < 0;
 
-    /// <summary>Cycles the cursor to the previous/next machine, ordered left→right
-    /// by each machine's leftmost monitor on the physical plane.</summary>
-    private void JumpBy(int dir)
+    // Switcher session — touched only on the keyboard-hook thread.
+    private List<string>? _swMachines;
+    private int _swSel;
+
+    /// <summary>Opens the switcher (first arrow press) or moves its selection,
+    /// ordered left→right by each machine's leftmost monitor on the plane.</summary>
+    private void SwitcherAdvance(int dir)
     {
-        string? target;
-        // TryEnter, not lock: this runs on the keyboard-hook thread. If the
-        // engine is wedged, blocking here stalls every keystroke in the system
-        // until Windows removes the keyboard hook.
-        if (!Monitor.TryEnter(_sync, 100)) return;
-        try
+        if (_swMachines is null)
         {
-            var machines = _layout.Monitors
-                .GroupBy(m => m.MachineId)
-                .OrderBy(g => g.Min(m => m.PhysicalBounds.XMm))
-                .Select(g => g.Key)
-                .ToList();
+            List<string> machines;
+            // TryEnter, not lock: this runs on the keyboard-hook thread. If the
+            // engine is wedged, blocking here stalls every keystroke in the
+            // system until Windows removes the keyboard hook.
+            if (!Monitor.TryEnter(_sync, 100)) return;
+            try
+            {
+                machines = _layout.Monitors
+                    .GroupBy(m => m.MachineId)
+                    .OrderBy(g => g.Min(m => m.PhysicalBounds.XMm))
+                    .Select(g => g.Key)
+                    .ToList();
+            }
+            finally { Monitor.Exit(_sync); }
             if (machines.Count < 2) return;
+            _swMachines = machines;
             var current = _router.Active?.MachineId ?? _localMachineId;
-            var idx = machines.IndexOf(current);
-            target = machines[((idx < 0 ? 0 : idx) + dir + machines.Count) % machines.Count];
+            _swSel = Math.Max(0, machines.IndexOf(current));
         }
-        finally { Monitor.Exit(_sync); }
+        _swSel = (_swSel + dir + _swMachines.Count) % _swMachines.Count;
+        SwitcherChanged?.Invoke(_swMachines.ToArray(), _swSel);
+    }
+
+    private void CancelSwitcher()
+    {
+        if (_swMachines is null) return;
+        _swMachines = null;
+        SwitcherClosed?.Invoke();
+    }
+
+    private void CommitSwitcher()
+    {
+        var machines = _swMachines;
+        if (machines is null) return;
+        var target = machines[_swSel];
+        _swMachines = null;
+        SwitcherClosed?.Invoke(); // hide the strip on the OLD active machine before routing retargets
+        if (_captured)
+        {
+            // The remote saw Ctrl/Alt go down before the session opened; the
+            // committing releases are swallowed here, so release them there or
+            // they stay held on that machine forever.
+            RemoteKey?.Invoke(0xA2, 0x1D, false, false); // LCtrl up
+            RemoteKey?.Invoke(0xA3, 0x1D, false, true);  // RCtrl up
+            RemoteKey?.Invoke(0xA4, 0x38, false, false); // LAlt up
+            RemoteKey?.Invoke(0xA5, 0x38, false, true);  // RAlt up
+        }
         JumpToMachine(target);
+        if (_captured)
+        {
+            // Landed remote: the user's physical Ctrl/Alt releases get swallowed
+            // (captured keys are), so THIS machine would keep its modifiers held
+            // forever. Inject the ups locally — no-ops if already released.
+            CursorInjector.KeyEvent(0xA2, 0x1D, false, false);
+            CursorInjector.KeyEvent(0xA3, 0x1D, false, true);
+            CursorInjector.KeyEvent(0xA4, 0x38, false, false);
+            CursorInjector.KeyEvent(0xA5, 0x38, false, true);
+        }
     }
 
     /// <summary>Warps the cursor to the centre of a machine's largest monitor —
@@ -303,6 +371,7 @@ public sealed class InputEngine : IDisposable
             ControlEnteredRemote?.Invoke(entered); // retargets routing + Enter msg
             RemoteCursor?.Invoke(entered, px, py);
         }
+        JumpLanded?.Invoke(entered, px, py); // after RemoteCursor so the warp lands first
         RaiseStatus(force: true);
     }
 

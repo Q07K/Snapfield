@@ -22,8 +22,25 @@ public partial class App : Application
 
     public static new App Current => (App)Application.Current;
 
+    // Held for the app's lifetime; a second instance sees it and bows out.
+    private static Mutex? _singleInstance;
+
     protected override void OnStartup(StartupEventArgs e)
     {
+        // Two instances mean two sets of global input hooks whose SendInput
+        // calls wait on each other — under load that wedges input system-wide
+        // (observed as a captured-state hang). The app lives in the tray, so a
+        // "second launch" is almost always a user who lost the tray icon.
+        _singleInstance = new Mutex(initiallyOwned: true, @"Local\Snapfield.SingleInstance", out var isFirst);
+        if (!isFirst)
+        {
+            MessageBox.Show(
+                "Snapfield이 이미 실행 중입니다.\n작업 표시줄 오른쪽 트레이의 Snapfield 아이콘을 클릭해 여세요.",
+                "Snapfield", MessageBoxButton.OK, MessageBoxImage.Information);
+            Shutdown();
+            return;
+        }
+
         MonitorEnumerator.EnableDpiAwareness();
         base.OnStartup(e);
 

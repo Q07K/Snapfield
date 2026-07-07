@@ -39,8 +39,13 @@ public sealed class InputEngine : IDisposable
     // The router and capture state are touched by three threads: the mouse-hook
     // thread (moves), the keyboard-hook thread (panic release), and network
     // reader threads (layout updates on peer join/leave). One small lock keeps
-    // them consistent — every guarded section is pure in-memory work, so hook
-    // callbacks stay fast.
+    // them consistent — every guarded section MUST be pure in-memory work.
+    // SendInput and SetSystemCursor are NOT in-memory work: SendInput waits on
+    // every other low-level hook in the system and pumps sent messages while it
+    // waits. Holding _sync across it once wedged the whole engine (hang dump:
+    // hook thread inside OnMove → SendInput → re-entrant OnMove → SendInput,
+    // panic release and watchdog both parked on _sync behind it). Decide under
+    // the lock; warp/hide/show/notify only after releasing it.
     private readonly object _sync = new();
 
     /// <summary>Local pixel→mm scale and the parking point, swapped atomically as
@@ -220,7 +225,11 @@ public sealed class InputEngine : IDisposable
     private void JumpBy(int dir)
     {
         string? target;
-        lock (_sync)
+        // TryEnter, not lock: this runs on the keyboard-hook thread. If the
+        // engine is wedged, blocking here stalls every keystroke in the system
+        // until Windows removes the keyboard hook.
+        if (!Monitor.TryEnter(_sync, 100)) return;
+        try
         {
             var machines = _layout.Monitors
                 .GroupBy(m => m.MachineId)
@@ -232,6 +241,7 @@ public sealed class InputEngine : IDisposable
             var idx = machines.IndexOf(current);
             target = machines[((idx < 0 ? 0 : idx) + dir + machines.Count) % machines.Count];
         }
+        finally { Monitor.Exit(_sync); }
         JumpToMachine(target);
     }
 
@@ -245,8 +255,14 @@ public sealed class InputEngine : IDisposable
     {
         string? entered = null;
         var returned = false;
+        var show = false; var hide = false;
+        var warp = false; int wx = 0, wy = 0;
         int px = 0, py = 0;
-        lock (_sync)
+        // TryEnter: callers include the keyboard-hook thread (Ctrl+Alt+arrows)
+        // and the UI thread — a wedged engine must cost them a missed jump, not
+        // a hang.
+        if (!Monitor.TryEnter(_sync, 250)) return;
+        try
         {
             var res = _router.JumpToMachine(machineId);
             if (res.Owner is null) return;
@@ -258,10 +274,10 @@ public sealed class InputEngine : IDisposable
                 if (_captured)
                 {
                     _captured = false;
-                    CursorHider.Show();
+                    show = true;
                     returned = true;
                 }
-                CursorInjector.WarpTo(px, py);
+                warp = true; wx = px; wy = py;
             }
             else
             {
@@ -269,13 +285,18 @@ public sealed class InputEngine : IDisposable
                 if (!_captured)
                 {
                     _captured = true;
-                    if (HideCursorWhileCaptured) CursorHider.Hide();
+                    hide = HideCursorWhileCaptured;
                     var m = _metrics;
-                    CursorInjector.WarpTo(m.CenterX, m.CenterY);
+                    warp = true; wx = m.CenterX; wy = m.CenterY;
                 }
                 entered = res.Owner.MachineId;
             }
         }
+        finally { Monitor.Exit(_sync); }
+
+        if (show) CursorHider.Show();
+        if (hide) CursorHider.Hide();
+        if (warp) CursorInjector.WarpTo(wx, wy);
         if (returned) ControlReturnedLocal?.Invoke();
         if (entered is not null)
         {
@@ -303,19 +324,28 @@ public sealed class InputEngine : IDisposable
     public void ForceReleaseToLocal()
     {
         if (!_captured) return;
-        int cx, cy;
-        lock (_sync)
-        {
-            if (!_captured) return; // lost the race to a normal ToLocal transition
-            _captured = false;
-            var m = _metrics;
-            cx = m.CenterX; cy = m.CenterY;
-            _router.SeatLocal(cx, cy);
-        }
+        // This is the escape hatch — it runs on the keyboard-hook thread (panic
+        // taps) and the watchdog, exactly when the engine may be wedged. Restore
+        // what the user needs without touching _sync: keys and buttons check
+        // _captured lock-free, so flipping it un-swallows input immediately, and
+        // Show() makes the cursor visible again. The router reseat and the warp
+        // go to a helper thread where a held _sync can't take the caller hostage.
+        _captured = false;
         CursorHider.Show();
-        CursorInjector.WarpTo(cx, cy);
-        ControlReturnedLocal?.Invoke();
-        RaiseStatus(force: true);
+        var t = new Thread(() =>
+        {
+            int cx, cy;
+            lock (_sync)
+            {
+                var m = _metrics;
+                cx = m.CenterX; cy = m.CenterY;
+                _router.SeatLocal(cx, cy);
+            }
+            CursorInjector.WarpTo(cx, cy);
+            ControlReturnedLocal?.Invoke();
+            RaiseStatus(force: true);
+        }) { IsBackground = true, Name = "Snapfield.Release" };
+        t.Start();
     }
 
     // Runs on the hook thread — keep it fast.
@@ -337,17 +367,38 @@ public sealed class InputEngine : IDisposable
         return false;
     }
 
-    // Decide under _sync, notify after releasing it. Event handlers reach into
-    // the network layer, which takes its own locks and (on a link failure) used
-    // to tear the connection down inline — running that while holding _sync on
-    // the hook thread inverted the session's lock order (_engineLock → _sync)
-    // and could deadlock the hook callback, after which Windows silently
-    // removes the hook and capture is stuck with the keyboard swallowed.
+    // SendInput pumps sent messages while it waits on the system's other
+    // low-level hooks, so a REAL move can re-enter this callback on this same
+    // thread while the outer call is still inside WarpTo (seen in a hang dump:
+    // OnMove → SendInput → OnMove → SendInput …). Recursing injects yet again
+    // and the nesting spirals until the hook times out — swallow re-entrant
+    // moves instead; the next top-level move re-syncs the position.
+    // [ThreadStatic] because a watchdog reinstall can briefly leave an old,
+    // still-unwinding hook thread alive next to the new one.
+    [ThreadStatic] private static bool _inMove;
+
     private bool OnMove(int x, int y)
+    {
+        if (_inMove) return _captured; // swallow while captured, else pass through
+        _inMove = true;
+        try { return OnMoveCore(x, y); }
+        finally { _inMove = false; }
+    }
+
+    // Decide under _sync; warp/hide/show/notify only after releasing it.
+    // Event handlers reach into the network layer, which takes its own locks —
+    // running those under _sync inverted the session's lock order. And WarpTo
+    // (SendInput) can block on every other hook in the system — holding _sync
+    // across it parks the panic release and the watchdog behind a syscall that
+    // may not return, which is exactly the captured-state brick this engine
+    // must never reproduce.
+    private bool OnMoveCore(int x, int y)
     {
         string? entered = null;   // capture just started on this machine
         string? streamTo = null;  // still remote: stream position to this machine
         var returned = false;     // capture just released back to local
+        var show = false; var hide = false;
+        var warp = false; int wx = 0, wy = 0;
         int px = 0, py = 0;
 
         lock (_sync)
@@ -360,9 +411,9 @@ public sealed class InputEngine : IDisposable
 
                 // Crossing to a remote: park the cursor and capture.
                 _captured = true;
-                if (HideCursorWhileCaptured) CursorHider.Hide();
+                hide = HideCursorWhileCaptured;
                 var m0 = _metrics;
-                CursorInjector.WarpTo(m0.CenterX, m0.CenterY);
+                warp = true; wx = m0.CenterX; wy = m0.CenterY;
                 if (res.Owner is not null)
                 {
                     entered = res.Owner.MachineId;
@@ -381,9 +432,9 @@ public sealed class InputEngine : IDisposable
                 if (result.Transition == RouteTransition.ToLocal)
                 {
                     _captured = false;
-                    CursorHider.Show();
+                    show = true;
                     (px, py) = result.PixelInt;
-                    CursorInjector.WarpTo(px, py);
+                    warp = true; wx = px; wy = py;
                     returned = true;
                 }
                 else
@@ -395,11 +446,14 @@ public sealed class InputEngine : IDisposable
                         streamTo = result.Owner.MachineId;
                         (px, py) = result.PixelInt;
                     }
-                    CursorInjector.WarpTo(m.CenterX, m.CenterY);
+                    warp = true; wx = m.CenterX; wy = m.CenterY;
                 }
             }
         }
 
+        if (hide) CursorHider.Hide();
+        if (show) CursorHider.Show();
+        if (warp) CursorInjector.WarpTo(wx, wy);
         if (entered is not null) ControlEnteredRemote?.Invoke(entered);
         if (streamTo is not null) RemoteCursor?.Invoke(streamTo, px, py);
         if (returned) ControlReturnedLocal?.Invoke();

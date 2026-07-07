@@ -1,4 +1,6 @@
+using System.Buffers.Binary;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Snapfield.Core.Persistence;
 
 namespace Snapfield.Core.Net;
@@ -49,14 +51,6 @@ public sealed record NetMessage
     public string? Pin { get; init; }
     public SharedFile[]? Files { get; init; }
 
-    // Omit default-valued fields: a CursorMove then carries only {X, Y} instead
-    // of all 15 fields (~5× smaller frames at mouse-polling rate). Deserialising
-    // fills missing fields with the same defaults, so the round-trip is lossless.
-    private static readonly JsonSerializerOptions Json = new()
-    {
-        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault,
-    };
-
     public static NetMessage Hello(string machineId, MonitorState[] monitors, string? pin = null) =>
         new() { Type = MsgType.Hello, MachineId = machineId, Monitors = monitors, Pin = pin };
 
@@ -74,13 +68,102 @@ public sealed record NetMessage
     public static NetMessage Enter() => new() { Type = MsgType.ControlEnter };
     public static NetMessage Leave() => new() { Type = MsgType.ControlLeave };
 
+    // ── binary fast-path ─────────────────────────────────────────────────────
+    // Messages that flow at input rate (cursor at mouse-polling frequency, plus
+    // buttons/wheel/keys) skip JSON entirely: a fixed little-endian layout
+    // tagged by a first byte that can never start a JSON body ('{' = 0x7B), so
+    // both encodings share the wire and FromBody picks by that byte.
+
+    /// <summary>Upper bound of any binary-encoded body (see <see cref="TryEncodeBinary"/>).</summary>
+    public const int MaxBinaryLength = 16;
+
+    private const byte BinCursor = 0x01; // [tag][x:i32][y:i32]                 = 9
+    private const byte BinButton = 0x02; // [tag][button:u8][down:u8]           = 3
+    private const byte BinWheel  = 0x03; // [tag][delta:i32][horizontal:u8]     = 6
+    private const byte BinKey    = 0x04; // [tag][vk:i32][scan:i32][flags:u8]   = 10
+
+    /// <summary>Encodes a high-rate message into its fixed binary form. Returns
+    /// false for message types that go as JSON. <paramref name="dest"/> must be
+    /// at least <see cref="MaxBinaryLength"/> bytes.</summary>
+    public bool TryEncodeBinary(Span<byte> dest, out int written)
+    {
+        switch (Type)
+        {
+            case MsgType.CursorMove:
+                dest[0] = BinCursor;
+                BinaryPrimitives.WriteInt32LittleEndian(dest[1..], X);
+                BinaryPrimitives.WriteInt32LittleEndian(dest[5..], Y);
+                written = 9;
+                return true;
+            case MsgType.MouseButton:
+                dest[0] = BinButton;
+                dest[1] = (byte)Button;
+                dest[2] = Down ? (byte)1 : (byte)0;
+                written = 3;
+                return true;
+            case MsgType.MouseWheel:
+                dest[0] = BinWheel;
+                BinaryPrimitives.WriteInt32LittleEndian(dest[1..], WheelDelta);
+                dest[5] = Horizontal ? (byte)1 : (byte)0;
+                written = 6;
+                return true;
+            case MsgType.Key:
+                dest[0] = BinKey;
+                BinaryPrimitives.WriteInt32LittleEndian(dest[1..], Vk);
+                BinaryPrimitives.WriteInt32LittleEndian(dest[5..], Scan);
+                dest[9] = (byte)((Down ? 1 : 0) | (Extended ? 2 : 0));
+                written = 10;
+                return true;
+            default:
+                written = 0;
+                return false;
+        }
+    }
+
     /// <summary>Serialise the message body to UTF-8 JSON (no length prefix).</summary>
-    public byte[] ToJson() => JsonSerializer.SerializeToUtf8Bytes(this, Json);
+    public byte[] ToJson() => JsonSerializer.SerializeToUtf8Bytes(this, NetMessageJsonContext.Default.NetMessage);
 
     /// <summary>Serialise into a caller-owned writer — lets the send loop reuse
     /// its buffers instead of allocating per message.</summary>
-    public void WriteTo(Utf8JsonWriter writer) => JsonSerializer.Serialize(writer, this, Json);
+    public void WriteTo(Utf8JsonWriter writer) =>
+        JsonSerializer.Serialize(writer, this, NetMessageJsonContext.Default.NetMessage);
 
-    public static NetMessage? FromBody(ReadOnlySpan<byte> body) =>
-        JsonSerializer.Deserialize<NetMessage>(body, Json);
+    /// <summary>Decodes a message body: binary fast-path frames by their tag
+    /// byte, everything else as JSON. Null for malformed/unknown bodies.</summary>
+    public static NetMessage? FromBody(ReadOnlySpan<byte> body)
+    {
+        if (body.Length == 0) return null;
+        switch (body[0])
+        {
+            case BinCursor:
+                if (body.Length != 9) return null;
+                return Cursor(
+                    BinaryPrimitives.ReadInt32LittleEndian(body[1..]),
+                    BinaryPrimitives.ReadInt32LittleEndian(body[5..]));
+            case BinButton:
+                if (body.Length != 3) return null;
+                return MouseBtn(body[1], body[2] != 0);
+            case BinWheel:
+                if (body.Length != 6) return null;
+                return Wheel(BinaryPrimitives.ReadInt32LittleEndian(body[1..]), body[5] != 0);
+            case BinKey:
+                if (body.Length != 10) return null;
+                return KeyEvent(
+                    BinaryPrimitives.ReadInt32LittleEndian(body[1..]),
+                    BinaryPrimitives.ReadInt32LittleEndian(body[5..]),
+                    (body[9] & 1) != 0,
+                    (body[9] & 2) != 0);
+            default:
+                try { return JsonSerializer.Deserialize(body, NetMessageJsonContext.Default.NetMessage); }
+                catch (JsonException) { return null; }
+        }
+    }
 }
+
+// Omit default-valued fields: a JSON-encoded message carries only the fields it
+// uses instead of all 15. Deserialising fills missing fields with the same
+// defaults, so the round-trip is lossless. Source-generated: no reflection on
+// the per-message path, and trimming/AOT safe.
+[JsonSourceGenerationOptions(DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingDefault)]
+[JsonSerializable(typeof(NetMessage))]
+internal sealed partial class NetMessageJsonContext : JsonSerializerContext;

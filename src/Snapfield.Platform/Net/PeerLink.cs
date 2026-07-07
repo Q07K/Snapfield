@@ -198,6 +198,7 @@ public sealed class PeerLink : IDisposable
         var nonce = new byte[12];
         var body = new ArrayBufferWriter<byte>(256);
         using var json = new Utf8JsonWriter(body);
+        var bin = new byte[NetMessage.MaxBinaryLength];
         var frame = new byte[1024]; // grows to the largest message seen
         try
         {
@@ -209,11 +210,19 @@ public sealed class PeerLink : IDisposable
                     message = Interlocked.Exchange(ref _pendingCursor, null);
                     if (message is null) continue;
                 }
-                body.ResetWrittenCount();
-                json.Reset(body);
-                message.WriteTo(json);
-                json.Flush();
-                var plain = body.WrittenSpan;
+                ReadOnlySpan<byte> plain;
+                if (message.TryEncodeBinary(bin, out var binLen))
+                {
+                    plain = bin.AsSpan(0, binLen);
+                }
+                else
+                {
+                    body.ResetWrittenCount();
+                    json.Reset(body);
+                    message.WriteTo(json);
+                    json.Flush();
+                    plain = body.WrittenSpan;
+                }
 
                 // Frame: [len:4][ctr:8][tag:16][ciphertext] — encrypt in place.
                 var total = 4 + 8 + 16 + plain.Length;

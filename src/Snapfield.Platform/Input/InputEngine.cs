@@ -51,6 +51,15 @@ public sealed class InputEngine : IDisposable
     private volatile bool _captured;
     private int _lastStatusTick;
 
+    // Capture watchdog: Windows silently removes a low-level hook whose callback
+    // exceeds the hook timeout. If that happens while captured, the mouse comes
+    // back locally but the keyboard hook keeps swallowing every key — forever.
+    // The watchdog detects the removed hook (see WatchdogTick) and heals.
+    private readonly object _lifecycle = new(); // serializes Start/Stop/hook reinstall
+    private System.Threading.Timer? _watchdog;
+    private volatile int _lastMouseCbTick;
+    private int _watchdogBusy;
+
     /// <summary>Cursor speed multiplier while traversing remote screens.</summary>
     public double Sensitivity { get; set; } = 1.0;
 
@@ -108,28 +117,71 @@ public sealed class InputEngine : IDisposable
 
     public void Start()
     {
-        if (IsRunning) return;
-        var (x, y) = CursorInjector.GetPosition();
-        lock (_sync)
+        lock (_lifecycle)
         {
-            _router.SeatLocal(x, y);
-            _captured = false;
+            if (IsRunning) return;
+            var (x, y) = CursorInjector.GetPosition();
+            lock (_sync)
+            {
+                _router.SeatLocal(x, y);
+                _captured = false;
+            }
+            _hook.Start();
+            _kbHook.Start();
+            _lastMouseCbTick = Environment.TickCount;
+            _watchdog = new System.Threading.Timer(_ => WatchdogTick(), null, 2000, 2000);
+            IsRunning = true;
         }
-        _hook.Start();
-        _kbHook.Start();
-        IsRunning = true;
         RaiseStatus(force: true);
     }
 
     public void Stop()
     {
-        if (!IsRunning) return;
-        _hook.Stop();
-        _kbHook.Stop();
-        _captured = false;
-        CursorHider.Show(); // never leave the system cursor hidden
-        IsRunning = false;
+        lock (_lifecycle)
+        {
+            if (!IsRunning) return;
+            _watchdog?.Dispose();
+            _watchdog = null;
+            _hook.Stop();
+            _kbHook.Stop();
+            _captured = false;
+            CursorHider.Show(); // never leave the system cursor hidden
+            IsRunning = false;
+        }
         RaiseStatus(force: true);
+    }
+
+    /// <summary>
+    /// Detects a mouse hook the OS silently removed while captured. Captured
+    /// means the cursor is parked at screen centre and every real movement makes
+    /// a hook callback that re-parks it — so "no callback for a while, yet the
+    /// cursor wandered off the parking spot" can only mean the hook is gone.
+    /// A user who simply isn't moving the mouse leaves the cursor at centre and
+    /// never trips this. Heals by reinstalling the hook and yanking control
+    /// home; without it the keyboard stays swallowed until the app restarts.
+    /// </summary>
+    private void WatchdogTick()
+    {
+        if (System.Threading.Interlocked.Exchange(ref _watchdogBusy, 1) != 0) return;
+        try
+        {
+            if (!IsRunning || !_captured) return;
+            if (Environment.TickCount - _lastMouseCbTick < 1500) return;
+            var m = _metrics;
+            var (cx, cy) = CursorInjector.GetPosition();
+            if (Math.Abs(cx - m.CenterX) <= 8 && Math.Abs(cy - m.CenterY) <= 8) return;
+
+            lock (_lifecycle)
+            {
+                if (!IsRunning || !_captured) return;
+                _hook.Stop();
+                _hook.Start();
+                _lastMouseCbTick = Environment.TickCount;
+            }
+            ForceReleaseToLocal();
+            Fault?.Invoke("마우스 훅이 시스템에서 제거되어 다시 설치했습니다 — 제어를 이 PC로 되돌렸습니다.");
+        }
+        finally { System.Threading.Volatile.Write(ref _watchdogBusy, 0); }
     }
 
     // Runs on the keyboard-hook thread — keep it fast. While captured, keys go
@@ -184,14 +236,21 @@ public sealed class InputEngine : IDisposable
     }
 
     /// <summary>Warps the cursor to the centre of a machine's largest monitor —
-    /// the fast path across a wide plane, no seam-pushing required.</summary>
+    /// the fast path across a wide plane, no seam-pushing required.
+    ///
+    /// Like <see cref="OnMove"/>: decide under the lock, notify after releasing
+    /// it. Handlers reach into the network layer, which takes its own locks —
+    /// holding _sync across them is a lock-order inversion.</summary>
     public void JumpToMachine(string machineId)
     {
+        string? entered = null;
+        var returned = false;
+        int px = 0, py = 0;
         lock (_sync)
         {
             var res = _router.JumpToMachine(machineId);
             if (res.Owner is null) return;
-            var (px, py) = res.PixelInt;
+            (px, py) = res.PixelInt;
 
             if (res.Owner.MachineId == _localMachineId)
             {
@@ -200,7 +259,7 @@ public sealed class InputEngine : IDisposable
                 {
                     _captured = false;
                     CursorHider.Show();
-                    ControlReturnedLocal?.Invoke();
+                    returned = true;
                 }
                 CursorInjector.WarpTo(px, py);
             }
@@ -214,11 +273,16 @@ public sealed class InputEngine : IDisposable
                     var m = _metrics;
                     CursorInjector.WarpTo(m.CenterX, m.CenterY);
                 }
-                ControlEnteredRemote?.Invoke(res.Owner.MachineId); // retargets routing + Enter msg
-                RemoteCursor?.Invoke(res.Owner.MachineId, px, py);
+                entered = res.Owner.MachineId;
             }
-            RaiseStatus(force: true);
         }
+        if (returned) ControlReturnedLocal?.Invoke();
+        if (entered is not null)
+        {
+            ControlEnteredRemote?.Invoke(entered); // retargets routing + Enter msg
+            RemoteCursor?.Invoke(entered, px, py);
+        }
+        RaiseStatus(force: true);
     }
 
     private bool IsPanicTap(KeyHookEvent e)
@@ -257,6 +321,7 @@ public sealed class InputEngine : IDisposable
     // Runs on the hook thread — keep it fast.
     private bool OnMouseEvent(MouseHookEvent e)
     {
+        _lastMouseCbTick = Environment.TickCount; // any callback proves the hook is alive
         if (e.InjectedByUs) return false; // ignore our own warps
 
         if (e.Message == WM_MOUSEMOVE)
@@ -272,65 +337,74 @@ public sealed class InputEngine : IDisposable
         return false;
     }
 
+    // Decide under _sync, notify after releasing it. Event handlers reach into
+    // the network layer, which takes its own locks and (on a link failure) used
+    // to tear the connection down inline — running that while holding _sync on
+    // the hook thread inverted the session's lock order (_engineLock → _sync)
+    // and could deadlock the hook callback, after which Windows silently
+    // removes the hook and capture is stuck with the keyboard swallowed.
     private bool OnMove(int x, int y)
     {
+        string? entered = null;   // capture just started on this machine
+        string? streamTo = null;  // still remote: stream position to this machine
+        var returned = false;     // capture just released back to local
+        int px = 0, py = 0;
+
         lock (_sync)
         {
             if (!_captured)
             {
                 var res = _router.OnLocalAbsolute(x, y);
-                if (res.Transition == RouteTransition.ToRemote)
+                if (res.Transition != RouteTransition.ToRemote)
+                    return false; // normal local movement
+
+                // Crossing to a remote: park the cursor and capture.
+                _captured = true;
+                if (HideCursorWhileCaptured) CursorHider.Hide();
+                var m0 = _metrics;
+                CursorInjector.WarpTo(m0.CenterX, m0.CenterY);
+                if (res.Owner is not null)
                 {
-                    EnterCapture(res);
-                    return true; // stop this move; cursor is now parked
+                    entered = res.Owner.MachineId;
+                    streamTo = res.Owner.MachineId; // seed remote cursor at entry point
+                    (px, py) = res.PixelInt;
                 }
-                return false; // normal local movement
             }
-
-            // Captured: convert the delta from the parked centre into physical mm.
-            var m = _metrics;
-            var dxMm = (x - m.CenterX) * m.MmPerPx * Sensitivity;
-            var dyMm = (y - m.CenterY) * m.MmPerPx * Sensitivity;
-            var result = _router.OnDelta(dxMm, dyMm);
-
-            if (result.Transition == RouteTransition.ToLocal)
+            else
             {
-                _captured = false;
-                CursorHider.Show();
-                var (px, py) = result.PixelInt;
-                CursorInjector.WarpTo(px, py);
-                ControlReturnedLocal?.Invoke();
-                RaiseStatus(force: true);
-                return true;
-            }
+                // Captured: convert the delta from the parked centre into physical mm.
+                var m = _metrics;
+                var dxMm = (x - m.CenterX) * m.MmPerPx * Sensitivity;
+                var dyMm = (y - m.CenterY) * m.MmPerPx * Sensitivity;
+                var result = _router.OnDelta(dxMm, dyMm);
 
-            // Still remote: stream the position to the remote, then reset the parking
-            // point so we always have movement headroom locally.
-            if (result.Owner is not null)
-            {
-                var (px, py) = result.PixelInt;
-                RemoteCursor?.Invoke(result.Owner.MachineId, px, py);
+                if (result.Transition == RouteTransition.ToLocal)
+                {
+                    _captured = false;
+                    CursorHider.Show();
+                    (px, py) = result.PixelInt;
+                    CursorInjector.WarpTo(px, py);
+                    returned = true;
+                }
+                else
+                {
+                    // Still remote: stream the position, then reset the parking
+                    // point so we always have movement headroom locally.
+                    if (result.Owner is not null)
+                    {
+                        streamTo = result.Owner.MachineId;
+                        (px, py) = result.PixelInt;
+                    }
+                    CursorInjector.WarpTo(m.CenterX, m.CenterY);
+                }
             }
-            CursorInjector.WarpTo(m.CenterX, m.CenterY);
-            RaiseStatus(force: false);
-            return true;
         }
-    }
 
-    // Called with _sync held (from OnMove).
-    private void EnterCapture(Snapfield.Core.Input.RouteResult res)
-    {
-        _captured = true;
-        if (HideCursorWhileCaptured) CursorHider.Hide();
-        var m = _metrics;
-        CursorInjector.WarpTo(m.CenterX, m.CenterY);
-        if (res.Owner is not null)
-        {
-            ControlEnteredRemote?.Invoke(res.Owner.MachineId);
-            var (px, py) = res.PixelInt;
-            RemoteCursor?.Invoke(res.Owner.MachineId, px, py); // seed remote cursor at entry point
-        }
-        RaiseStatus(force: true);
+        if (entered is not null) ControlEnteredRemote?.Invoke(entered);
+        if (streamTo is not null) RemoteCursor?.Invoke(streamTo, px, py);
+        if (returned) ControlReturnedLocal?.Invoke();
+        RaiseStatus(force: entered is not null || returned);
+        return true; // the move was consumed (parked or warped)
     }
 
     private void ForwardButtonOrWheel(MouseHookEvent e)

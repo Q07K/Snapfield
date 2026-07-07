@@ -96,6 +96,10 @@ public sealed class PeerLink : IDisposable
         if (_closed) { try { client.Close(); } catch { } return; }
         _client = client;
         _client.NoDelay = true;
+        // Keepalive only probes an IDLE connection — with unacked data pending
+        // (a stalled peer mid-control) TCP retransmits for minutes instead. The
+        // send timeout is what actually detects that peer in bounded time.
+        _client.SendTimeout = 5000;
         EnableTcpKeepAlive(_client.Client);
         _stream = _client.GetStream();
 
@@ -262,7 +266,14 @@ public sealed class PeerLink : IDisposable
     private void FireDisconnected(string reason)
     {
         if (_closed) return;
-        if (Interlocked.Exchange(ref _downFired, 1) == 0) Disconnected?.Invoke(reason);
+        if (Interlocked.Exchange(ref _downFired, 1) != 0) return;
+        // Dispatch on a fresh thread, never the caller's: Send() can fail on a
+        // low-level hook thread, and the teardown behind Disconnected takes
+        // locks and touches disk — inside a hook callback that deadlocks the
+        // input engine and gets the hook silently removed by Windows.
+        var t = new Thread(() => { try { Disconnected?.Invoke(reason); } catch { } })
+        { IsBackground = true, Name = "Snapfield.Down" };
+        t.Start();
     }
 
     // ── raw framed I/O for the plaintext handshake (single-threaded) ─────────

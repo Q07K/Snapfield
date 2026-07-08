@@ -72,6 +72,10 @@ jobs:
             > 처음 실행 시 SmartScreen 경고가 뜨면 **추가 정보 → 실행**을 누르세요
             > (코드 서명이 없는 exe라서 표시됩니다).
 
+            > 앱은 **관리자 권한으로 실행**됩니다 (실행 시 UAC 승인 1회) —
+            > 작업 관리자 등 관리자 권한 창 위에서도 원격 조작이 동작하기 위해 필요합니다.
+            > "로그인 시 자동 실행"을 켜면 부팅 후에는 UAC 없이 시작됩니다.
+
   # Android receiver APK — attached to the same release after the exe job.
   # Signs with the repo keystore when the ANDROID_KEYSTORE_B64 secret exists;
   # otherwise falls back to a debug key (installable, but updates over a

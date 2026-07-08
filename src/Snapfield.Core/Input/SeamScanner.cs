@@ -100,7 +100,12 @@ public static class SeamScanner
         var gap = edgeB - edgeA;
         if (gap < -1 || gap > SeamGapMm) return null;
 
+        // And the same LATERAL bound: the router only hands off within SeamGapMm
+        // of the counterpart's span, so a pair with more daylight along the edge
+        // is not adjacent at all — don't draw markers promising a crossing.
         var alongDist = Math.Max(0, Math.Max(aLo, bLo) - Math.Min(aHi, bHi));
+        if (alongDist > SeamGapMm) return null;
+
         return new SeamCandidate(vertical, edgeA + gap / 2, aLo, aHi, bLo, bHi,
             Score: Math.Max(gap, 0) + alongDist);
     }
@@ -111,14 +116,18 @@ public static class SeamScanner
         var hi = Math.Min(c.AHi, c.BHi);
         if (hi > lo) direct.Add(new SeamSegment(c.Vertical, c.Seam, lo, hi, Direct: true));
 
-        AddOffBand(offBand, c.Vertical, c.Seam, c.ALo, c.AHi, lo, hi);
-        AddOffBand(offBand, c.Vertical, c.Seam, c.BLo, c.BHi, lo, hi);
+        AddOffBand(offBand, c.Vertical, c.Seam, c.ALo, c.AHi, lo, hi, c.BLo, c.BHi);
+        AddOffBand(offBand, c.Vertical, c.Seam, c.BLo, c.BHi, lo, hi, c.ALo, c.AHi);
     }
 
-    /// <summary>The parts of one side's edge span with no counterpart across the seam.</summary>
+    /// <summary>The parts of one side's edge span with no counterpart across the seam,
+    /// truncated to where the router actually crosses (within <see cref="SeamGapMm"/>
+    /// of the counterpart's span).</summary>
     private static void AddOffBand(List<SeamSegment> result, bool vertical, double seam,
-        double lo, double hi, double directLo, double directHi)
+        double lo, double hi, double directLo, double directHi, double otherLo, double otherHi)
     {
+        lo = Math.Max(lo, otherLo - SeamGapMm);
+        hi = Math.Min(hi, otherHi + SeamGapMm);
         if (directHi <= directLo) // no facing band at all — the whole edge is off-band
         {
             if (hi - lo > MinOffBandMm) result.Add(new SeamSegment(vertical, seam, lo, hi, Direct: false));

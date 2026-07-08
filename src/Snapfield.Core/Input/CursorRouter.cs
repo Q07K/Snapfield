@@ -314,6 +314,12 @@ public sealed class CursorRouter
             var perp = edge is Edge.Right or Edge.Left
                 ? PerpDistance(along, rb.YMm, rb.Bottom)
                 : PerpDistance(along, rb.XMm, rb.Right);
+            // Off-band tolerance is bounded BOTH ways: a monitor sitting past the
+            // edge but far off to the side is not this edge's neighbour. Without
+            // this cap, any monitor within the seam gap beyond the edge captured
+            // the whole edge — pushing "down" jumped to a machine that sat
+            // entirely diagonally (no span overlap at all).
+            if (perp > SeamGapMm) continue;
             if (perp < bestPerp) { bestPerp = perp; best = m; }
         }
         return best;

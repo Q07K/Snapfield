@@ -18,7 +18,7 @@ public sealed class SettingsViewModel : ObservableObject
     public SettingsViewModel(NetworkViewModel network)
     {
         _network = network;
-        _autoStart = StartupRegistry.IsEnabled;
+        _autoStart = StartupTask.IsEnabled;
         _restoreOnLaunch = SettingsStore.Load().RestoreOnLaunch;
         RegisterFirewallCommand = new RelayCommand(RegisterFirewall);
         CopyPinCommand = new RelayCommand(CopyPin);
@@ -39,7 +39,7 @@ public sealed class SettingsViewModel : ObservableObject
     public bool AutoStart
     {
         get => _autoStart;
-        set { if (SetField(ref _autoStart, value)) StartupRegistry.Set(value); }
+        set { if (SetField(ref _autoStart, value)) StartupTask.Set(value); }
     }
 
     private bool _restoreOnLaunch;

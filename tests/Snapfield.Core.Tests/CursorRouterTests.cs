@@ -166,6 +166,50 @@ public class CursorRouterTests
     }
 
     [Fact]
+    public void BottomEdge_RemoteDiagonallyBelow_NoSpanOverlap_DoesNotHandOff()
+    {
+        // The field layout: company laptop top-left, wide monitor top-right,
+        // GYU laptop below the monitor. GYU's top edge is within the seam gap
+        // below the company laptop's bottom, but sits ~300 mm to the RIGHT with
+        // zero horizontal overlap — pushing down must NOT jump diagonally.
+        var laptop = Local(); // machine A: x 0..597.6, y 0..336.2
+        var gyu = new MonitorInfo
+        {
+            MachineId = "B", DeviceId = "B-gyu",
+            PixelBounds = new PixelRect(0, 0, 2880, 1800),
+            PhysicalBounds = new PhysicalRect(900, 340, 340, 213), // 302 mm right of A, 4 mm below
+        };
+        var r = new CursorRouter("A", new DesktopLayout(new[] { laptop, gyu }));
+        r.SeatLocal(1920, 1080);
+
+        var result = r.OnLocalAbsolute(1920, 2159); // pinned at A's bottom edge, centred
+
+        Assert.Equal(RouteTransition.None, result.Transition);
+        Assert.True(r.IsLocalActive);
+    }
+
+    [Fact]
+    public void BottomEdge_RemoteBelow_SlightlyOffBand_StillCrosses()
+    {
+        // The lateral cap must not kill the flick tolerance: a remote whose span
+        // starts 40 mm right of the cursor's exit point (within SeamGapMm) crosses.
+        var laptop = Local();
+        var below = new MonitorInfo
+        {
+            MachineId = "B", DeviceId = "B-below",
+            PixelBounds = new PixelRect(0, 0, 1920, 1080),
+            PhysicalBounds = new PhysicalRect(637.6, 340, 531.4, 298.9), // starts 40 mm past A's right
+        };
+        var r = new CursorRouter("A", new DesktopLayout(new[] { laptop, below }));
+        r.SeatLocal(1920, 1080);
+
+        var result = r.OnLocalAbsolute(3839, 2159); // A's bottom-right corner
+
+        Assert.Equal(RouteTransition.ToRemote, result.Transition);
+        Assert.Equal("B", result.Owner!.MachineId);
+    }
+
+    [Fact]
     public void MiddleOfScreen_DoesNotHandOff()
     {
         var r = Router();

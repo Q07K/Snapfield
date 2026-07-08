@@ -66,6 +66,17 @@ public class SeamScannerTests
     }
 
     [Fact]
+    public void DiagonalPair_BeyondLateralTolerance_YieldsNothing()
+    {
+        // Mirrors the router's lateral cap: b starts within the seam gap below
+        // a's bottom edge but sits far to the right with no span overlap.
+        var a = new SeamRect("A", 0, 0, 600, 336);
+        var b = new SeamRect("B", 900, 340, 340, 213);
+
+        Assert.Empty(SeamScanner.Scan(new[] { a, b }));
+    }
+
+    [Fact]
     public void SameMachinePair_IsIgnored()
     {
         var a = new SeamRect("A", 0, 0, 600, 336);

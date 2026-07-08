@@ -6,6 +6,19 @@
        system-aware: monitor rects come back virtualized while the low-level
        mouse hook reports physical pixels, so edge detection never fires on
        scaled displays. -->
+  <!-- UIPI: a medium-integrity process neither receives low-level hook events
+       nor lands SendInput while an ELEVATED window has focus — remote control
+       went dead over Task Manager / admin terminals. Elevation on both ends is
+       the only fix (same requirement as Synergy/MWB). Autostart must then go
+       through a Task Scheduler task with RunLevel=Highest (see StartupTask) —
+       the HKCU Run key silently skips exes that require elevation. -->
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v2">
+    <security>
+      <requestedPrivileges>
+        <requestedExecutionLevel level="requireAdministrator" uiAccess="false" />
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
   <application xmlns="urn:schemas-microsoft-com:asm.v3">
     <windowsSettings>
       <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2</dpiAwareness>

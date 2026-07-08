@@ -44,6 +44,11 @@ public partial class App : Application
         MonitorEnumerator.EnableDpiAwareness();
         base.OnStartup(e);
 
+        // Pre-elevation releases registered autostart via the HKCU Run key,
+        // which Windows now skips (the exe requires admin) — move the setting
+        // to the elevated scheduler task once.
+        StartupTask.MigrateFromRunKey();
+
         // The transparent capture-cursor is a SYSTEM-wide change that survives a
         // crash/kill — heal it unconditionally on every launch, and put the
         // cursor back before dying on any unhandled failure.

@@ -1,15 +1,11 @@
 name: Android
 
-# Builds the receiver APK whenever the android/ tree changes, so the scaffold
-# stays green without waiting for a release tag. Signs with the repo keystore
-# when the secrets exist (same signature as releases — artifact APKs update
-# over installed ones), else falls back to a debug key.
+# On-demand APK build (manual runs only). Releases are the single CI trigger:
+# every functional change bumps the version and ships via a v* tag, so the
+# release workflow already builds the APK — this stays for ad-hoc test builds.
+# Signs with the repo keystore when the secrets exist (same signature as
+# releases — artifact APKs update over installed ones), else a debug key.
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'android/**'
-      - '.github/workflows/android.yml'
   workflow_dispatch:
 
 permissions:

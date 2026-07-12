@@ -42,6 +42,16 @@ jobs:
             -p:IncludeNativeLibrariesForSelfExtract=true `
             --output publish
 
+      - name: Publish Linux receiver (self-contained single-file)
+        shell: pwsh
+        run: |
+          dotnet publish src/Snapfield.LinuxReceiver/Snapfield.LinuxReceiver.csproj `
+            --configuration Release `
+            --runtime linux-x64 `
+            --self-contained true `
+            -p:PublishSingleFile=true `
+            --output publish-linux
+
       - name: Stage release asset
         shell: pwsh
         run: |
@@ -49,19 +59,20 @@ jobs:
           if ([string]::IsNullOrWhiteSpace($version)) { $version = "dev" }
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           Copy-Item publish/Snapfield.App.exe "dist/Snapfield-$version.exe"
+          Copy-Item publish-linux/snapfield-receiver "dist/Snapfield-Receiver-$version-linux-x64"
           Get-ChildItem dist
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
           name: Snapfield-exe
-          path: dist/*.exe
+          path: dist/*
 
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.exe
+          files: dist/*
           generate_release_notes: true
           body: |
             ## Snapfield ${{ github.ref_name }}
@@ -75,6 +86,10 @@ jobs:
             > 앱은 **관리자 권한으로 실행**됩니다 (실행 시 UAC 승인 1회) —
             > 작업 관리자 등 관리자 권한 창 위에서도 원격 조작이 동작하기 위해 필요합니다.
             > "로그인 시 자동 실행"을 켜면 부팅 후에는 UAC 없이 시작됩니다.
+
+            **리눅스 수신기**: `Snapfield-Receiver-*-linux-x64` — 우분투 데스크톱(Wayland/X11)을
+            수신 기기로 만드는 콘솔 데몬. 사용법은 README의 "리눅스 수신 기기" 절 참고
+            (`chmod +x` 후 실행, 최초 1회 uinput udev 규칙 필요).
 
   # Android receiver APK — attached to the same release after the exe job.
   # Signs with the repo keystore when the ANDROID_KEYSTORE_B64 secret exists;

@@ -3,7 +3,7 @@ using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Text;
 
-namespace Snapfield.Platform.Net;
+namespace Snapfield.Core.Net;
 
 /// <summary>A receiver seen on the local network via its UDP beacon.</summary>
 public readonly record struct DiscoveredPeer(string Name, string Host, int Port);

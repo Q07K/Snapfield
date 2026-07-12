@@ -8,6 +8,7 @@ using Brush = System.Windows.Media.Brush;
 using Brushes = System.Windows.Media.Brushes;
 using Color = System.Windows.Media.Color;
 using Snapfield.App.Mvvm;
+using Snapfield.Core.Net;
 using Snapfield.Core.Persistence;
 using Snapfield.Platform.Input;
 using Snapfield.Platform.Monitors;

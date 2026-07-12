@@ -6,9 +6,8 @@ using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using Snapfield.Core.Net;
 
-namespace Snapfield.Platform.Net;
+namespace Snapfield.Core.Net;
 
 /// <summary>
 /// A secure TCP connection between two Snapfield peers.

@@ -5,6 +5,7 @@ import android.os.Handler
 import android.os.Looper
 import android.view.KeyEvent
 import android.view.View
+import android.view.inputmethod.EditorInfo
 
 /**
  * A screenless keyboard (IME). The desktop forwards raw keyboard-hook events —
@@ -92,6 +93,31 @@ class SnapfieldImeService : InputMethodService() {
             return
         }
 
+        // Enter: soft keyboards don't send a raw key — a field with an IME
+        // action (a chat app's send, a search box's search …) expects
+        // performEditorAction; only hardware ENTER key events get mapped to the
+        // action by the framework, so an IME-origin KEYCODE_ENTER just dies
+        // there. PC messenger convention: Enter = the action, Shift+Enter =
+        // newline. Fields without an action keep the raw-key newline.
+        if (vk == VK_RETURN) {
+            if (!down) return
+            flushComposition(ic)
+            val opts = currentInputEditorInfo?.imeOptions ?: 0
+            val action = opts and EditorInfo.IME_MASK_ACTION
+            val hasAction = (opts and EditorInfo.IME_FLAG_NO_ENTER_ACTION) == 0 &&
+                action != EditorInfo.IME_ACTION_NONE &&
+                action != EditorInfo.IME_ACTION_UNSPECIFIED
+            when {
+                hasAction && !shift -> ic.performEditorAction(action)
+                hasAction -> ic.commitText("\n", 1)
+                else -> {
+                    ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER))
+                    ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER))
+                }
+            }
+            return
+        }
+
         val keyCode = specialKeyCode(vk)
         if (keyCode != 0) {
             // Navigation / editing keys end the composition, then act.
@@ -145,7 +171,6 @@ class SnapfieldImeService : InputMethodService() {
     /// (Esc never reaches here — the service maps it to the global Back.) */
     private fun specialKeyCode(vk: Int): Int = when (vk) {
         VK_BACK -> KeyEvent.KEYCODE_DEL
-        VK_RETURN -> KeyEvent.KEYCODE_ENTER
         VK_TAB -> KeyEvent.KEYCODE_TAB
         0x25 -> KeyEvent.KEYCODE_DPAD_LEFT
         0x26 -> KeyEvent.KEYCODE_DPAD_UP

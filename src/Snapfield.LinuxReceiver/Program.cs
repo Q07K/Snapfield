@@ -117,7 +117,7 @@ static bool OfferPermissionSetup()
         udevadm trigger --name-match=uinput 2>/dev/null || udevadm trigger
         udevadm settle 2>/dev/null || true
         if [ -n "$SUDO_USER" ]; then usermod -aG input "$SUDO_USER" || true; fi
-        """;
+        """.Replace("\r", ""); // raw string inherits the source file's line endings — CRLF breaks sh
     try
     {
         var psi = new System.Diagnostics.ProcessStartInfo("sudo") { UseShellExecute = false };

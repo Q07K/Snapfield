@@ -15,7 +15,7 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <Version>0.16.3</Version>
+    <Version>0.16.4</Version>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\snapfield.ico</ApplicationIcon>
     <!-- Windows attributes tray-balloon toasts to the exe's FileDescription/Product;

@@ -73,6 +73,7 @@ public sealed class UinputInjector : IDisposable
             throw new IOException(
                 "/dev/uinput을 열 수 없습니다 (권한 부족). 수동으로 설정하려면:\n" +
                 $"  echo '{UdevRule}' | sudo tee {UdevRulePath}\n" +
+                "  echo uinput | sudo tee /etc/modules-load.d/snapfield-uinput.conf && sudo modprobe uinput\n" +
                 "  sudo udevadm control --reload-rules && sudo udevadm trigger\n" +
                 "  sudo usermod -aG input $USER   # 원격(비데스크톱) 세션용 — 재로그인 필요");
         return fd;

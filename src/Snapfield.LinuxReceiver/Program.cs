@@ -71,6 +71,8 @@ catch (IOException ex)
     }
 }
 
+if (clipboardOn && !HasCommand("wl-paste")) OfferClipboardInstall();
+
 var clipboard = new WaylandClipboard();
 using var session = new ReceiverSession(
     name, port, () => pin, ScreenInfo.AsMonitors(screens, name), injector, clipboard);
@@ -131,6 +133,40 @@ static bool OfferPermissionSetup()
         return false;
     }
     catch { return false; }
+}
+
+static bool HasCommand(string cmd) =>
+    (Environment.GetEnvironmentVariable("PATH") ?? "")
+        .Split(':', StringSplitOptions.RemoveEmptyEntries)
+        .Any(dir => File.Exists(Path.Combine(dir, cmd)));
+
+/// <summary>Clipboard sync needs the wl-clipboard package (not preinstalled on
+/// Ubuntu) — offer to apt-install it on first run, mirroring the uinput setup.</summary>
+static void OfferClipboardInstall()
+{
+    Console.WriteLine("클립보드 동기화에는 wl-clipboard 패키지가 필요합니다 (없으면 동기화만 꺼진 채 동작).");
+    if (Console.IsInputRedirected || !HasCommand("apt-get"))
+    {
+        Console.WriteLine("  sudo apt install wl-clipboard   # 설치 후 재실행");
+        return;
+    }
+    Console.Write("지금 설치할까요? (sudo apt install wl-clipboard) [Y/n] ");
+    var answer = Console.ReadLine()?.Trim().ToLowerInvariant();
+    if (answer is not (null or "" or "y" or "yes")) return;
+    try
+    {
+        var psi = new System.Diagnostics.ProcessStartInfo("sudo") { UseShellExecute = false };
+        foreach (var a in new[] { "apt-get", "install", "-y", "wl-clipboard" }) psi.ArgumentList.Add(a);
+        using var p = System.Diagnostics.Process.Start(psi)!;
+        p.WaitForExit();
+        Console.WriteLine(p.ExitCode == 0
+            ? "wl-clipboard 설치 완료."
+            : "설치가 실패했습니다 — sudo apt install wl-clipboard 를 직접 실행하세요.");
+    }
+    catch
+    {
+        Console.WriteLine("설치를 시작하지 못했습니다 — sudo apt install wl-clipboard 를 직접 실행하세요.");
+    }
 }
 
 static string LoadOrCreatePin()

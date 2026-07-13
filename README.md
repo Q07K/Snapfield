@@ -95,11 +95,9 @@ ARM64 기기(ASUS Ascent GX10, NVIDIA DGX Spark, 라즈베리파이 5 등)는 `S
 cd ~/Downloads
 chmod +x Snapfield-Receiver-*-linux-arm64   # 최초 1회 (x64 기기는 *-linux-x64)
 ./Snapfield-Receiver-*-linux-arm64
-
-sudo apt install wl-clipboard               # 클립보드 동기화용 (선택)
 ```
 
-최초 실행 시 uinput 권한이 없으면 **자동 설정을 제안**한다 — Y 누르고 sudo 암호 한 번이면 끝 (udev `uaccess` 규칙이라 재로그인 없이 즉시 적용). 수동 설정 명령은 거절 시 출력된다. (v0.16.3 이하는 자동 설정 스크립트에 버그가 있다 — v0.16.4 이상을 쓰거나 출력된 수동 명령을 사용.)
+최초 실행 시 부족한 것들을 **자동 설정으로 제안**한다 — uinput 권한(udev `uaccess` 규칙이라 재로그인 없이 즉시 적용)과 클립보드 동기화용 wl-clipboard 패키지(v0.16.5+). 각각 Y 누르고 sudo 암호면 끝이고, 거절하면 수동 명령이 출력된다. (v0.16.3 이하는 자동 설정 스크립트에 버그가 있다 — v0.16.4 이상을 쓰거나 출력된 수동 명령을 사용.)
 
 실행하면 연결 코드 6자리가 출력되고(`~/.config/snapfield/receiver.json`에 유지), 터미널 창은 닫지 말고 그대로 둔다 — 데몬이 그 안에서 돈다.
 

@@ -55,8 +55,20 @@ UinputInjector injector;
 try { injector = new UinputInjector(ux, uy, uw, uh); }
 catch (IOException ex)
 {
-    Console.WriteLine(ex.Message);
-    return 1;
+    // First run on a fresh machine: offer to install the udev rule ourselves.
+    // The uaccess tag applies an ACL to the logged-in seat user the moment
+    // udev re-triggers, so the retry below works without any re-login.
+    if (!OfferPermissionSetup())
+    {
+        Console.WriteLine(ex.Message);
+        return 1;
+    }
+    try { injector = new UinputInjector(ux, uy, uw, uh); }
+    catch (IOException)
+    {
+        Console.WriteLine("설정은 됐지만 권한이 아직 적용되지 않았습니다 — 로그아웃 후 다시 로그인해서 재실행하세요.");
+        return 1;
+    }
 }
 
 var clipboard = new WaylandClipboard();
@@ -84,6 +96,42 @@ done.Wait();
 clipboard.Dispose();
 injector.Dispose();
 return 0;
+
+/// <summary>Interactive first-run setup: install the uinput udev rule via one
+/// sudo call, then re-trigger udev so the permission applies immediately.
+/// Returns true when it ran successfully (caller retries opening uinput).</summary>
+static bool OfferPermissionSetup()
+{
+    Console.WriteLine("/dev/uinput 접근 권한이 없습니다 — 최초 1회 설정이 필요합니다.");
+    if (Console.IsInputRedirected) return false; // no tty to ask on (service run) — print manual steps
+    Console.Write("지금 자동으로 설정할까요? (sudo 암호를 물을 수 있습니다) [Y/n] ");
+    var answer = Console.ReadLine()?.Trim().ToLowerInvariant();
+    if (answer is not (null or "" or "y" or "yes")) return false;
+
+    var script = $"""
+        set -e
+        printf '%s\n' '{UinputInjector.UdevRule}' > {UinputInjector.UdevRulePath}
+        printf 'uinput\n' > /etc/modules-load.d/snapfield-uinput.conf
+        modprobe uinput 2>/dev/null || true
+        udevadm control --reload-rules
+        udevadm trigger --name-match=uinput 2>/dev/null || udevadm trigger
+        udevadm settle 2>/dev/null || true
+        if [ -n "$SUDO_USER" ]; then usermod -aG input "$SUDO_USER" || true; fi
+        """;
+    try
+    {
+        var psi = new System.Diagnostics.ProcessStartInfo("sudo") { UseShellExecute = false };
+        psi.ArgumentList.Add("sh");
+        psi.ArgumentList.Add("-c");
+        psi.ArgumentList.Add(script);
+        using var p = System.Diagnostics.Process.Start(psi)!;
+        p.WaitForExit();
+        if (p.ExitCode == 0) { Console.WriteLine("권한 설정 완료."); return true; }
+        Console.WriteLine("설정 명령이 실패했습니다.");
+        return false;
+    }
+    catch { return false; }
+}
 
 static string LoadOrCreatePin()
 {

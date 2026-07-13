@@ -59,15 +59,22 @@ public sealed class UinputInjector : IDisposable
         _keyboard = CreateKeyboard();
     }
 
+    /// <summary>The udev rule the setup installs: uaccess grants the seat's
+    /// logged-in user an ACL immediately (no re-login), the input group is the
+    /// fallback for non-seat sessions, static_node keeps the node present.</summary>
+    public const string UdevRule =
+        "KERNEL==\"uinput\", MODE=\"0660\", GROUP=\"input\", TAG+=\"uaccess\", OPTIONS+=\"static_node=uinput\"";
+    public const string UdevRulePath = "/etc/udev/rules.d/70-snapfield-uinput.rules";
+
     private static int OpenUinput()
     {
         var fd = Open("/dev/uinput", O_WRONLY | O_NONBLOCK);
         if (fd < 0)
             throw new IOException(
-                "/dev/uinput을 열 수 없습니다 (권한 부족). 다음을 실행한 뒤 재로그인하세요:\n" +
-                "  echo 'KERNEL==\"uinput\", MODE=\"0660\", GROUP=\"input\", OPTIONS+=\"static_node=uinput\"' | sudo tee /etc/udev/rules.d/99-snapfield-uinput.rules\n" +
+                "/dev/uinput을 열 수 없습니다 (권한 부족). 수동으로 설정하려면:\n" +
+                $"  echo '{UdevRule}' | sudo tee {UdevRulePath}\n" +
                 "  sudo udevadm control --reload-rules && sudo udevadm trigger\n" +
-                "  sudo usermod -aG input $USER");
+                "  sudo usermod -aG input $USER   # 원격(비데스크톱) 세션용 — 재로그인 필요");
         return fd;
     }
 

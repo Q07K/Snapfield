@@ -88,8 +88,8 @@ jobs:
             > "로그인 시 자동 실행"을 켜면 부팅 후에는 UAC 없이 시작됩니다.
 
             **리눅스 수신기**: `Snapfield-Receiver-*-linux-x64` — 우분투 데스크톱(Wayland/X11)을
-            수신 기기로 만드는 콘솔 데몬. 사용법은 README의 "리눅스 수신 기기" 절 참고
-            (`chmod +x` 후 실행, 최초 1회 uinput udev 규칙 필요).
+            수신 기기로 만드는 콘솔 데몬. `chmod +x` 후 실행하면 최초 1회 권한 설정을
+            스스로 제안합니다 (sudo 암호 1회, 재로그인 불필요). README "리눅스 수신 기기" 절 참고.
 
   # Android receiver APK — attached to the same release after the exe job.
   # Signs with the repo keystore when the ANDROID_KEYSTORE_B64 secret exists;

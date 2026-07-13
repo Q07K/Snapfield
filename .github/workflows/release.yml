@@ -42,15 +42,18 @@ jobs:
             -p:IncludeNativeLibrariesForSelfExtract=true `
             --output publish
 
-      - name: Publish Linux receiver (self-contained single-file)
+      - name: Publish Linux receiver (self-contained single-file, x64 + arm64)
         shell: pwsh
         run: |
-          dotnet publish src/Snapfield.LinuxReceiver/Snapfield.LinuxReceiver.csproj `
-            --configuration Release `
-            --runtime linux-x64 `
-            --self-contained true `
-            -p:PublishSingleFile=true `
-            --output publish-linux
+          foreach ($rid in 'linux-x64', 'linux-arm64') {
+            dotnet publish src/Snapfield.LinuxReceiver/Snapfield.LinuxReceiver.csproj `
+              --configuration Release `
+              --runtime $rid `
+              --self-contained true `
+              -p:PublishSingleFile=true `
+              --output "publish-$rid"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
 
       - name: Stage release asset
         shell: pwsh
@@ -59,7 +62,8 @@ jobs:
           if ([string]::IsNullOrWhiteSpace($version)) { $version = "dev" }
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           Copy-Item publish/Snapfield.App.exe "dist/Snapfield-$version.exe"
-          Copy-Item publish-linux/snapfield-receiver "dist/Snapfield-Receiver-$version-linux-x64"
+          Copy-Item publish-linux-x64/snapfield-receiver "dist/Snapfield-Receiver-$version-linux-x64"
+          Copy-Item publish-linux-arm64/snapfield-receiver "dist/Snapfield-Receiver-$version-linux-arm64"
           Get-ChildItem dist
 
       - name: Upload workflow artifact
@@ -87,9 +91,12 @@ jobs:
             > 작업 관리자 등 관리자 권한 창 위에서도 원격 조작이 동작하기 위해 필요합니다.
             > "로그인 시 자동 실행"을 켜면 부팅 후에는 UAC 없이 시작됩니다.
 
-            **리눅스 수신기**: `Snapfield-Receiver-*-linux-x64` — 우분투 데스크톱(Wayland/X11)을
-            수신 기기로 만드는 콘솔 데몬. `chmod +x` 후 실행하면 최초 1회 권한 설정을
-            스스로 제안합니다 (sudo 암호 1회, 재로그인 불필요). README "리눅스 수신 기기" 절 참고.
+            **리눅스 수신기**: `Snapfield-Receiver-*-linux-x64`(인텔/AMD) 또는
+            `Snapfield-Receiver-*-linux-arm64`(ARM64 — ASUS Ascent GX10, DGX Spark, 라즈베리파이 5 등) —
+            우분투 데스크톱(Wayland/X11)을 수신 기기로 만드는 콘솔 데몬.
+            `uname -m`이 `aarch64`이면 arm64 버전을 받으세요. `chmod +x` 후 실행하면
+            최초 1회 권한 설정을 스스로 제안합니다 (sudo 암호 1회, 재로그인 불필요).
+            README "리눅스 수신 기기" 절 참고.
 
   # Android receiver APK — attached to the same release after the exe job.
   # Signs with the repo keystore when the ANDROID_KEYSTORE_B64 secret exists;

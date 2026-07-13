@@ -18,7 +18,7 @@ public sealed class ReceiverSession : IDisposable
     private readonly Func<string> _pin;
     private readonly MonitorState[] _monitors;
     private readonly UinputInjector _injector;
-    private readonly WaylandClipboard _clipboard;
+    private readonly LinuxClipboard _clipboard;
     private readonly Beacon _beacon = new();
 
     private PeerLink? _link;
@@ -28,7 +28,7 @@ public sealed class ReceiverSession : IDisposable
     public event Action<string>? Status;
 
     public ReceiverSession(string machineId, int port, Func<string> pin,
-        MonitorState[] monitors, UinputInjector injector, WaylandClipboard clipboard)
+        MonitorState[] monitors, UinputInjector injector, LinuxClipboard clipboard)
     {
         _machineId = machineId;
         _port = port;

@@ -71,9 +71,13 @@ catch (IOException ex)
     }
 }
 
-if (clipboardOn && !HasCommand("wl-paste")) OfferClipboardInstall();
+// X11 sessions (NVIDIA-driver GNOME is often X11 even on modern Ubuntu) sync
+// through xclip; Wayland through wl-clipboard. Neither is preinstalled.
+var clipPkg = LinuxClipboard.SessionIsX11 ? "xclip" : "wl-clipboard";
+var clipProbe = LinuxClipboard.SessionIsX11 ? "xclip" : "wl-paste";
+if (clipboardOn && !HasCommand(clipProbe)) OfferClipboardInstall(clipPkg);
 
-var clipboard = new WaylandClipboard();
+var clipboard = new LinuxClipboard();
 using var session = new ReceiverSession(
     name, port, () => pin, ScreenInfo.AsMonitors(screens, name), injector, clipboard);
 session.Status += s => Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {s}");
@@ -140,32 +144,33 @@ static bool HasCommand(string cmd) =>
         .Split(':', StringSplitOptions.RemoveEmptyEntries)
         .Any(dir => File.Exists(Path.Combine(dir, cmd)));
 
-/// <summary>Clipboard sync needs the wl-clipboard package (not preinstalled on
-/// Ubuntu) — offer to apt-install it on first run, mirroring the uinput setup.</summary>
-static void OfferClipboardInstall()
+/// <summary>Clipboard sync needs a helper package (wl-clipboard on Wayland,
+/// xclip on X11 — neither preinstalled on Ubuntu) — offer to apt-install it
+/// on first run, mirroring the uinput setup.</summary>
+static void OfferClipboardInstall(string pkg)
 {
-    Console.WriteLine("클립보드 동기화에는 wl-clipboard 패키지가 필요합니다 (없으면 동기화만 꺼진 채 동작).");
+    Console.WriteLine($"클립보드 동기화에는 {pkg} 패키지가 필요합니다 (없으면 동기화만 꺼진 채 동작).");
     if (Console.IsInputRedirected || !HasCommand("apt-get"))
     {
-        Console.WriteLine("  sudo apt install wl-clipboard   # 설치 후 재실행");
+        Console.WriteLine($"  sudo apt install {pkg}   # 설치 후 재실행");
         return;
     }
-    Console.Write("지금 설치할까요? (sudo apt install wl-clipboard) [Y/n] ");
+    Console.Write($"지금 설치할까요? (sudo apt install {pkg}) [Y/n] ");
     var answer = Console.ReadLine()?.Trim().ToLowerInvariant();
     if (answer is not (null or "" or "y" or "yes")) return;
     try
     {
         var psi = new System.Diagnostics.ProcessStartInfo("sudo") { UseShellExecute = false };
-        foreach (var a in new[] { "apt-get", "install", "-y", "wl-clipboard" }) psi.ArgumentList.Add(a);
+        foreach (var a in new[] { "apt-get", "install", "-y", pkg }) psi.ArgumentList.Add(a);
         using var p = System.Diagnostics.Process.Start(psi)!;
         p.WaitForExit();
         Console.WriteLine(p.ExitCode == 0
-            ? "wl-clipboard 설치 완료."
-            : "설치가 실패했습니다 — sudo apt install wl-clipboard 를 직접 실행하세요.");
+            ? $"{pkg} 설치 완료."
+            : $"설치가 실패했습니다 — sudo apt install {pkg} 를 직접 실행하세요.");
     }
     catch
     {
-        Console.WriteLine("설치를 시작하지 못했습니다 — sudo apt install wl-clipboard 를 직접 실행하세요.");
+        Console.WriteLine($"설치를 시작하지 못했습니다 — sudo apt install {pkg} 를 직접 실행하세요.");
     }
 }
 

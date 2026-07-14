@@ -36,8 +36,10 @@ public sealed class ReceiverSession : IDisposable
         _monitors = monitors;
         _injector = injector;
         _clipboard = clipboard;
-        _clipboard.TextChanged += text => _link?.Send(NetMessage.ClipboardText(text));
-        _clipboard.ImageChanged += png => _link?.Send(NetMessage.ClipboardPng(png));
+        _clipboard.TextChanged += text =>
+        { _link?.Send(NetMessage.ClipboardText(text)); Status?.Invoke($"클립보드 전송 ({text.Length}자)"); };
+        _clipboard.ImageChanged += png =>
+        { _link?.Send(NetMessage.ClipboardPng(png)); Status?.Invoke($"클립보드 이미지 전송 ({png.Length / 1024}KB)"); };
         _clipboard.Status += s => Status?.Invoke(s);
     }
 

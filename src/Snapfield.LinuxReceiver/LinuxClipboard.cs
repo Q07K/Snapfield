@@ -104,13 +104,11 @@ public sealed class LinuxClipboard : IDisposable
     /// records the current content without firing events.</summary>
     private void Sync(bool notify)
     {
-        var types = (_x11
-            ? Run("xclip", "-selection clipboard -t TARGETS -o", out _)
-            : Run("wl-paste", "--list-types", out _)) ?? "";
+        if (_x11) { SyncX11(notify); return; }
+        var types = Run("wl-paste", "--list-types", out _) ?? "";
         if (types.Contains("image/png"))
         {
-            var png = _x11 ? RunBytes("xclip", "-selection clipboard -t image/png -o")
-                           : RunBytes("wl-paste", "--type image/png");
+            var png = RunBytes("wl-paste", "--type image/png");
             if (png is null || png.Length == 0 || png.Length > PngCap) return;
             var md5 = Md5(png);
             if (md5 == _lastImageMd5) return; // unchanged, or our own apply echoed back
@@ -118,18 +116,40 @@ public sealed class LinuxClipboard : IDisposable
             if (notify) ImageChanged?.Invoke(png);
             return;
         }
-        var hasText = _x11
-            ? types.Contains("STRING") || types.Contains("text/plain") // UTF8_STRING contains STRING
-            : types.Contains("text/plain");
-        if (!hasText) return;
-        var text = _x11
-            ? Run("xclip", "-selection clipboard -t UTF8_STRING -o", out _)
-            : Run("wl-paste", "--no-newline --type text/plain;charset=utf-8", out _);
+        if (!types.Contains("text/plain")) return;
+        var text = Run("wl-paste", "--no-newline --type text/plain;charset=utf-8", out _);
+        ShipText(text, notify);
+    }
+
+    private void SyncX11(bool notify)
+    {
+        // No TARGETS gating — some owners answer content requests fine while
+        // TARGETS parsing is brittle. Probe image first (a text-only owner just
+        // errors → empty output), then fall through to text.
+        var png = RunBytes("xclip", "-selection clipboard -t image/png -o");
+        if (png is { Length: > 0 } && png.Length <= PngCap && IsPng(png))
+        {
+            var md5 = Md5(png);
+            if (md5 == _lastImageMd5) return;
+            _lastImageMd5 = md5;
+            if (notify) ImageChanged?.Invoke(png);
+            return;
+        }
+        var text = Run("xclip", "-selection clipboard -t UTF8_STRING -o", out _);
+        if (string.IsNullOrEmpty(text)) text = Run("xclip", "-selection clipboard -o", out _);
+        ShipText(text, notify);
+    }
+
+    private void ShipText(string? text, bool notify)
+    {
         if (string.IsNullOrEmpty(text) || text.Length > TextCap) return;
         if (text == _lastApplied || text == _lastSent) return;
         _lastSent = text;
         if (notify) TextChanged?.Invoke(text);
     }
+
+    private static bool IsPng(byte[] b) =>
+        b.Length > 8 && b[0] == 0x89 && b[1] == (byte)'P' && b[2] == (byte)'N' && b[3] == (byte)'G';
 
     // ── PC → Linux ────────────────────────────────────────────────────────────
     public void Apply(string text)

@@ -249,6 +249,106 @@ public class CursorRouterTests
     }
 
     [Fact]
+    public void SlowReturn_LandsOffTheHandoffRow_AndDoesNotRecapture()
+    {
+        // Creeping back across the seam used to land the cursor EXACTLY on the
+        // edge row that triggers handoff (x = Right-1) — one jitter event later
+        // it re-captured, and the cursor ping-ponged between the seam and the
+        // parked centre ("infinite loop on the same screen").
+        var r = Router();
+        r.SeatLocal(1920, 1080);
+        r.OnLocalAbsolute(3839, 1080); // -> remote
+
+        RouteResult back = default;
+        for (var i = 0; i < 10 && back.Transition != RouteTransition.ToLocal; i++)
+            back = r.OnDelta(-0.4, 0); // sub-millimetre creep home
+
+        Assert.Equal(RouteTransition.ToLocal, back.Transition);
+        Assert.True(back.PixelX <= 3836, $"landed on/next to the trigger row: {back.PixelX}");
+
+        // Feeding the landing position straight back must not hand off again.
+        var again = r.OnLocalAbsolute(back.PixelInt.X, back.PixelInt.Y);
+        Assert.Equal(RouteTransition.None, again.Transition);
+        Assert.True(r.IsLocalActive);
+    }
+
+    [Fact]
+    public void ReturnFromAbove_LandsBelowTheTopRow()
+    {
+        // Vertical stack: remote ABOVE the local monitor. Coming down, the
+        // crossing point is a hair inside the top edge, which rounded to row 0 —
+        // the top-edge trigger — every single time: the pointer "never came
+        // down", bouncing back up on the next event.
+        var above = new MonitorInfo
+        {
+            MachineId = "B", DeviceId = "B-above",
+            PixelBounds = new PixelRect(0, 0, 1920, 1080),
+            PhysicalBounds = new PhysicalRect(0, -298.9, 531.4, 298.9), // stacked on top of A
+        };
+        var r = new CursorRouter("A", new DesktopLayout(new[] { Local(), above }));
+        r.SeatLocal(1920, 1080);
+        r.OnLocalAbsolute(960, 0); // hand off upward
+        Assert.False(r.IsLocalActive);
+
+        RouteResult back = default;
+        for (var i = 0; i < 10 && back.Transition != RouteTransition.ToLocal; i++)
+            back = r.OnDelta(0, 0.4); // creep back down
+
+        Assert.Equal(RouteTransition.ToLocal, back.Transition);
+        Assert.True(back.PixelY >= 3, $"landed on the top trigger row: {back.PixelY}");
+
+        var again = r.OnLocalAbsolute(back.PixelInt.X, back.PixelInt.Y);
+        Assert.Equal(RouteTransition.None, again.Transition);
+        Assert.True(r.IsLocalActive);
+    }
+
+    [Fact]
+    public void BottomEdge_LocalNeighbourAcrossAGap_BlocksTheRemote()
+    {
+        // Local A on top, local A2 below it with a few mm of calibration
+        // daylight, and a remote within the seam gap off to the right. Pushing
+        // down where A2 spans must stay local — the remote-only edge scan used
+        // to teleport control to R because A2 was never a candidate.
+        var a = Local();
+        var a2 = new MonitorInfo
+        {
+            MachineId = "A", DeviceId = "A-lower",
+            PixelBounds = new PixelRect(0, 2160, 3840, 2160),
+            PhysicalBounds = new PhysicalRect(0, 341, 597.6, 336.2), // ~5 mm gap below A
+        };
+        var remote = new MonitorInfo
+        {
+            MachineId = "B", DeviceId = "B-right",
+            PixelBounds = new PixelRect(0, 0, 1920, 1080),
+            PhysicalBounds = new PhysicalRect(650, 350, 531.4, 298.9), // within SeamGapMm sideways
+        };
+        var r = new CursorRouter("A", new DesktopLayout(new[] { a, a2, remote }));
+        r.SeatLocal(1920, 1080);
+
+        var result = r.OnLocalAbsolute(3800, 2159); // A's bottom edge, near the right
+
+        Assert.Equal(RouteTransition.None, result.Transition);
+        Assert.True(r.IsLocalActive);
+    }
+
+    [Fact]
+    public void HugeOvershoot_EntryPixel_StaysInsideTheRemote()
+    {
+        // A flick overshooting past the remote's far edge used to clamp the
+        // seed onto the rect's INCLUSIVE bottom edge, whose pixel mapping is one
+        // row past the last (y = Height) — the receiver warped outside its
+        // monitor and the pointer landed on the wrong screen or vanished.
+        var r = Router();
+        r.SeatLocal(1920, 1080);
+
+        var result = r.OnLocalAbsolute(4482, 4000); // wildly past bottom-right
+
+        Assert.Equal(RouteTransition.ToRemote, result.Transition);
+        Assert.InRange(result.PixelInt.X, 0, 1919);
+        Assert.InRange(result.PixelInt.Y, 0, 1079);
+    }
+
+    [Fact]
     public void WhileRemote_MovingWithinRemote_StaysRemote()
     {
         var r = Router();

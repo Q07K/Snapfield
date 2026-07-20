@@ -1,6 +1,6 @@
 # Snapfield 설치 가이드
 
-Windows PC(EXE) · Android(APK) · 리눅스(수신 데몬) — v0.16.7 기준
+Windows PC(EXE) · Android(APK) · 리눅스(수신 데몬) — v0.16.8 기준
 
 **Snapfield**는 여러 PC와 안드로이드·리눅스 기기의 화면을 하나의 물리 평면에 놓고, 마우스·키보드·클립보드를 화면 경계 너머로 공유하는 도구다. 조작하는 Windows PC 1대(**조작 기기**)와, 조작을 받는 PC/폰/리눅스(**수신 기기**) 여러 대로 구성된다.
 

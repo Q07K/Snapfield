@@ -31,8 +31,10 @@ public static class CursorInjector
         return (p.x, p.y);
     }
 
-    /// <summary>Warps the cursor to a point in virtual-desktop pixels.</summary>
-    public static void WarpTo(int x, int y)
+    /// <summary>Warps the cursor to a point in virtual-desktop pixels.
+    /// Returns false when the OS rejected the injection (e.g. UIPI blocks a
+    /// non-elevated process while an elevated window has the foreground).</summary>
+    public static bool WarpTo(int x, int y)
     {
         var vs = _vScreen ??= new VirtualScreen(
             GetSystemMetrics(SM_XVIRTUALSCREEN),
@@ -44,7 +46,7 @@ public static class CursorInjector
         int nx = (int)Math.Round((x - vs.Left) * 65535.0 / Math.Max(vs.Width - 1, 1));
         int ny = (int)Math.Round((y - vs.Top) * 65535.0 / Math.Max(vs.Height - 1, 1));
 
-        Dispatch(new INPUT
+        return Dispatch(new INPUT
         {
             type = INPUT_MOUSE,
             U = new InputUnion
@@ -112,10 +114,10 @@ public static class CursorInjector
         });
     }
 
-    private static void Dispatch(in INPUT input)
+    private static bool Dispatch(in INPUT input)
     {
         var buf = _inputBuf ??= new INPUT[1];
         buf[0] = input;
-        SendInput(1, buf, InputSize);
+        return SendInput(1, buf, InputSize) == 1;
     }
 }

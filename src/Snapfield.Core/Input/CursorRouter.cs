@@ -29,6 +29,20 @@ public sealed class CursorRouter
     public double ProbeMm { get; set; } = 1.0;
 
     /// <summary>
+    /// How many pixels inside the local monitor a returning cursor lands, away
+    /// from every edge. Landing ON the edge row put the very next hook event
+    /// back on the handoff trigger (sensor jitter was enough), which re-captured
+    /// instantly — the cursor ping-ponged between the seam and the parked centre.
+    /// Worst on a top seam: entry from a machine above always rounded to row 0.
+    /// </summary>
+    public double ReentryInsetPx { get; set; } = 3.0;
+
+    /// <summary>Margin (mm) kept from the exclusive right/bottom rect edges when
+    /// clamping, so a clamped point still hit-tests to the monitor it was clamped
+    /// into (Clamp lands ON the edge, Contains excludes it).</summary>
+    private const double EdgeEpsMm = 0.05;
+
+    /// <summary>
     /// How far beyond an edge (mm) a remote monitor may sit and still be reachable
     /// by hitting that edge. Absorbs calibration gaps and lets a fast, slightly
     /// off-band flick still cross to the remote on that side.
@@ -107,12 +121,12 @@ public sealed class CursorRouter
         {
             var target = handoff.Value.Monitor;
             // Enter the remote as deep as the flick overshot, like a native seam.
-            var seed = target.PhysicalBounds.Clamp(new PhysicalPoint(
+            var seed = target.PhysicalBounds.ClampInside(new PhysicalPoint(
                 handoff.Value.Seed.XMm + overshootX,
-                handoff.Value.Seed.YMm + overshootY));
+                handoff.Value.Seed.YMm + overshootY), EdgeEpsMm);
             Virtual = seed;
             Active = target;
-            var (rx, ry) = _mapper.PhysicalToPixel(target, seed);
+            var (rx, ry) = PixelWithin(target, seed, 0);
             return new RouteResult(RouteTransition.ToRemote, target, rx, ry);
         }
         return new RouteResult(RouteTransition.None, Active, pixelX, pixelY);
@@ -154,7 +168,7 @@ public sealed class CursorRouter
         var wasLocal = IsLocalActive;
         Virtual = target.PhysicalBounds.Center;
         Active = target;
-        var (px, py) = _mapper.PhysicalToPixel(target, Virtual);
+        var (px, py) = PixelWithin(target, Virtual, 0);
         var transition = (wasLocal, IsLocalActive) switch
         {
             (true, false) => RouteTransition.ToRemote,
@@ -179,13 +193,13 @@ public sealed class CursorRouter
             // handoff does. Without this, remote→remote seams with any daylight
             // stuck the cursor — while the canvas arrows promised they cross.
             owner = BridgeAcrossGap(Active, p, dxMm, dyMm);
-            if (owner is not null) p = owner.PhysicalBounds.Clamp(p);
+            if (owner is not null) p = owner.PhysicalBounds.ClampInside(p, EdgeEpsMm);
         }
         if (owner is null)
         {
             // In a gap or off-plane: keep the cursor pinned to the nearest monitor.
             owner = _mapper.NearestMonitor(p);
-            if (owner is not null) p = owner.PhysicalBounds.Clamp(p);
+            if (owner is not null) p = owner.PhysicalBounds.ClampInside(p, EdgeEpsMm);
         }
 
         var wasLocal = IsLocalActive;
@@ -193,14 +207,18 @@ public sealed class CursorRouter
         Active = owner;
         var nowLocal = IsLocalActive;
 
-        var (px, py) = owner is null ? (0.0, 0.0) : _mapper.PhysicalToPixel(owner, p);
-
         var transition = (wasLocal, nowLocal) switch
         {
             (false, true) => RouteTransition.ToLocal,
             (true, false) => RouteTransition.ToRemote,
             _ => RouteTransition.None,
         };
+
+        // A returning cursor lands inset from every edge so the next hook event
+        // cannot sit on a handoff trigger row (see ReentryInsetPx).
+        var (px, py) = owner is null
+            ? (0.0, 0.0)
+            : PixelWithin(owner, p, transition == RouteTransition.ToLocal ? ReentryInsetPx : 0);
         return new RouteResult(transition, owner, px, py);
     }
 
@@ -243,11 +261,16 @@ public sealed class CursorRouter
         // the transition (Windows moves the cursor onto it) — don't hijack it.
         var hit = _mapper.HitTest(near);
         if (hit is not null)
-            return hit.MachineId == _localMachineId ? null : new Handoff(hit, hit.PhysicalBounds.Clamp(near));
+            return hit.MachineId == _localMachineId ? null : new Handoff(hit, hit.PhysicalBounds.ClampInside(near, EdgeEpsMm));
 
-        // Off-band / fast flick: hand off to the nearest remote beyond this edge.
-        var best = NearestRemoteBeyond(local, edge, along);
-        if (best is null) return null;
+        // Off-band / fast flick: hand off to the nearest monitor beyond this edge.
+        // Local monitors compete too — a local neighbour across a calibration gap
+        // must block the seam the same way an aligned one does. Scanning remotes
+        // only let a remote up to SeamGapMm off to the side steal a crossing whose
+        // true neighbour was the user's own next monitor ("the cursor won't come
+        // down — it teleports away instead").
+        var best = NearestBeyond(local, edge, along);
+        if (best is null || best.MachineId == _localMachineId) return null;
 
         var rb = best.PhysicalBounds;
         var seed = edge switch
@@ -257,7 +280,7 @@ public sealed class CursorRouter
             Edge.Down  => new PhysicalPoint(along, rb.YMm + ProbeMm),
             _          => new PhysicalPoint(along, rb.Bottom - ProbeMm),
         };
-        return new Handoff(best, rb.Clamp(seed));
+        return new Handoff(best, rb.ClampInside(seed, EdgeEpsMm));
     }
 
     /// <summary>
@@ -278,18 +301,15 @@ public sealed class CursorRouter
         if (edge is null) return null;
 
         var along = edge is Edge.Right or Edge.Left ? p.YMm : p.XMm;
-        return NearestBeyond(from, edge.Value, along, anyMachine: true);
+        return NearestBeyond(from, edge.Value, along);
     }
 
     /// <summary>
-    /// The remote monitor lying just beyond the given edge (within <see cref="SeamGapMm"/>),
+    /// The monitor lying just beyond the given edge (within <see cref="SeamGapMm"/>),
     /// closest to the cursor's position along the edge. Lets the cursor cross by
-    /// hitting the edge anywhere near the remote, not only where it's perfectly aligned.
+    /// hitting the edge anywhere near the neighbour, not only where it's perfectly aligned.
     /// </summary>
-    private MonitorInfo? NearestRemoteBeyond(MonitorInfo local, Edge edge, double along) =>
-        NearestBeyond(local, edge, along, anyMachine: false);
-
-    private MonitorInfo? NearestBeyond(MonitorInfo local, Edge edge, double along, bool anyMachine)
+    private MonitorInfo? NearestBeyond(MonitorInfo local, Edge edge, double along)
     {
         var lb = local.PhysicalBounds;
         MonitorInfo? best = null;
@@ -298,7 +318,6 @@ public sealed class CursorRouter
         foreach (var m in _layout.Monitors)
         {
             if (ReferenceEquals(m, local)) continue;
-            if (!anyMachine && m.MachineId == _localMachineId) continue;
             var rb = m.PhysicalBounds;
 
             bool beyond = edge switch
@@ -327,4 +346,22 @@ public sealed class CursorRouter
 
     private static double PerpDistance(double v, double lo, double hi) =>
         v < lo ? lo - v : v > hi ? v - hi : 0;
+
+    /// <summary>
+    /// Physical→pixel, clamped into the monitor's addressable rows
+    /// ([Left..Right-1] × [Top..Bottom-1]) plus an optional inset. The plain
+    /// mapping yields Right/Bottom (one past the last row) for a point on the
+    /// rect's inclusive far edge — warping there lands outside the monitor,
+    /// which on a multi-monitor receiver put the pointer on the wrong screen.
+    /// </summary>
+    private (double X, double Y) PixelWithin(MonitorInfo m, PhysicalPoint p, double insetPx)
+    {
+        var (x, y) = _mapper.PhysicalToPixel(m, p);
+        var pb = m.PixelBounds;
+        var ix = Math.Min(insetPx, (pb.Width - 1) / 2.0);
+        var iy = Math.Min(insetPx, (pb.Height - 1) / 2.0);
+        return (
+            Math.Clamp(x, pb.Left + ix, pb.Right - 1 - ix),
+            Math.Clamp(y, pb.Top + iy, pb.Bottom - 1 - iy));
+    }
 }

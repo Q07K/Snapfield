@@ -40,6 +40,7 @@ public sealed class NetworkSession : IDisposable
     private Beacon? _beacon;               // receiver only
     private long _rxCount;
     private int _lastRxTick;               // throttles ReceiverActivity UI updates
+    private int _injectBlocked;            // consecutive WarpTo failures (UIPI)
     private double _sensitivity = 1.0;
 
     public PeerRole Role { get; private set; } = PeerRole.None;
@@ -138,7 +139,13 @@ public sealed class NetworkSession : IDisposable
             // to drive the controller's own input over the same channel.
             case MsgType.CursorMove:
                 if (Role != PeerRole.Receiver) break;
-                CursorInjector.WarpTo(msg.X, msg.Y);
+                // UIPI silently discards injection from a non-elevated process
+                // while an elevated (UAC) window holds the foreground — the
+                // coordinate counter keeps ticking but the pointer freezes.
+                // Tell the user why, once per blocked streak.
+                if (CursorInjector.WarpTo(msg.X, msg.Y)) _injectBlocked = 0;
+                else if (++_injectBlocked == 25)
+                    Status?.Invoke("커서 주입이 차단되고 있습니다 — 관리자 권한 창이 앞에 떠 있으면 포인터가 움직이지 않습니다. Snapfield를 관리자 권한으로 실행하면 해결됩니다.");
                 _rxCount++;
                 // Throttle to ~33 Hz: moves arrive at mouse polling rate, and
                 // dispatching every one to the UI thread starves rendering.

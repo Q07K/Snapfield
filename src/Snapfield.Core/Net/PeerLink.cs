@@ -31,6 +31,13 @@ public sealed class PeerLink : IDisposable
     // than block.
     private const int SendQueueCapacity = 1024;
 
+    // A dial must fail in human time. Windows retries SYN for ~21s before the
+    // caller hears anything, and the handshake read had no bound at all — a peer
+    // whose single accept slot is taken leaves our socket in its OS backlog,
+    // where TCP is up but nobody ever speaks. Both bounded, both reported.
+    private const int ConnectTimeoutMs = 5000;
+    private const int HandshakeTimeoutMs = 8000;
+
     // Latest-wins slot for cursor moves: only the newest position matters, so a
     // slow peer replays one fresh position instead of every stale intermediate.
     // The queue carries this marker (by reference) to keep ordering with respect
@@ -75,7 +82,18 @@ public sealed class PeerLink : IDisposable
         StartThread("Snapfield.Connect", () =>
         {
             var c = new TcpClient();
-            c.Connect(host, port);
+            try
+            {
+                if (!c.ConnectAsync(host, port).Wait(ConnectTimeoutMs))
+                {
+                    try { c.Close(); } catch { }
+                    throw new IOException($"{host}:{port} 응답 없음 (연결 시간 초과)");
+                }
+            }
+            catch (AggregateException ae) when (ae.InnerException is not null)
+            {
+                throw ae.InnerException; // "연결이 거부됨" reads better than the wrapper
+            }
             Attach(c, initiator: true, pin);
         });
     }
@@ -99,6 +117,9 @@ public sealed class PeerLink : IDisposable
         // (a stalled peer mid-control) TCP retransmits for minutes instead. The
         // send timeout is what actually detects that peer in bounded time.
         _client.SendTimeout = 5000;
+        // Bound the handshake only. Cleared once keys are up, where a silent
+        // (idle) link is perfectly normal and a timeout would kill it.
+        _client.ReceiveTimeout = HandshakeTimeoutMs;
         EnableTcpKeepAlive(_client.Client);
         _stream = _client.GetStream();
 
@@ -111,6 +132,7 @@ public sealed class PeerLink : IDisposable
         try
         {
             Handshake(initiator, pin);
+            _client!.ReceiveTimeout = 0; // past the handshake, silence is allowed
         }
         catch (AuthenticationFailure)
         {

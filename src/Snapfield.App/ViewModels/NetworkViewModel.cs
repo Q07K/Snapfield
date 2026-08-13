@@ -374,6 +374,10 @@ public sealed class NetworkViewModel : ObservableObject
         var pin = ControllerPin.Trim();
         if (host.Length == 0 || pin.Length == 0) return;
         ShowNewForm = false;              // close the sheet
+        // The status line lives at the bottom of the scrolling add-device list,
+        // so on a long list the user never sees it — toast the attempt where they
+        // are actually looking, otherwise tapping 연결 looks like nothing happened.
+        Toast?.Invoke($"{host} 연결 중 …", "연결 코드로 인증하고 있습니다.", "Tip");
         EnsureSession();
         _session!.Connect(host, Port, pin); // adds a peer (hub can hold several)
         IsActive = true;

@@ -91,10 +91,30 @@ public sealed class NetworkSession : IDisposable
     public void Connect(string host, int port, string pin)
     {
         Role = PeerRole.Controller;
+
+        // An existing entry for this address used to end the call silently — and
+        // a click that changes nothing on screen reads as a dead button. Say what
+        // happened, and treat a re-click on a NOT-up entry as "retry now": that
+        // entry may be mid-connect, in a retry loop, or wedged, and the user
+        // asking again is the clearest possible signal to start clean.
+        Conn? stale = null;
         lock (_lock)
         {
-            if (_conns.Any(c => c.Host.Equals(host, StringComparison.OrdinalIgnoreCase) && c.Port == port)) return; // already connected/ing
+            var existing = _conns.FirstOrDefault(c => c.Host.Equals(host, StringComparison.OrdinalIgnoreCase) && c.Port == port);
+            if (existing is not null)
+            {
+                if (existing.IsUp)
+                {
+                    var who = existing.MachineId.Length > 0 ? existing.MachineId : host;
+                    Status?.Invoke($"'{who}'은(는) 이미 연결되어 있습니다.");
+                    return;
+                }
+                stale = existing;
+                _conns.Remove(existing);
+            }
         }
+        stale?.Stop(); // releases the socket; a removed conn never retries
+
         var conn = new Conn(this, initiator: true, host, port, pin);
         lock (_lock) _conns.Add(conn);
         conn.Start();
